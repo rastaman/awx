@@ -1,12 +1,7 @@
 // Configuration dependencies
 global.$AnsibleConfig = null;
 // Provided via Webpack DefinePlugin in webpack.config.js
-global.$ENV = {} ;
-// ui-router debugging
-if ($ENV['route-debug']){
-    let trace = angular.module('ui.router').trace;
-    trace.enable();
-}
+global.$ENV = {};
 
 var urlPrefix;
 
@@ -14,9 +9,7 @@ if ($basePath) {
     urlPrefix = `${$basePath}`;
 }
 
-// Modules
-import portalMode from './portal-mode/main';
-import systemTracking from './system-tracking/main';
+import start from './app.start';
 import inventoriesHosts from './inventories-hosts/main';
 import inventoryScripts from './inventory-scripts/main';
 import credentials from './credentials/main';
@@ -24,7 +17,6 @@ import credentialTypes from './credential-types/main';
 import organizations from './organizations/main';
 import managementJobs from './management-jobs/main';
 import workflowResults from './workflow-results/main';
-import jobResults from './job-results/main';
 import jobSubmission from './job-submission/main';
 import notifications from './notifications/main';
 import about from './about/main';
@@ -35,9 +27,7 @@ import configuration from './configuration/main';
 import home from './home/main';
 import login from './login/main';
 import activityStream from './activity-stream/main';
-import standardOut from './standard-out/main';
 import Templates from './templates/main';
-import jobs from './jobs/main';
 import teams from './teams/main';
 import users from './users/main';
 import projects from './projects/main';
@@ -45,78 +35,83 @@ import RestServices from './rest/main';
 import access from './access/main';
 import scheduler from './scheduler/main';
 import instanceGroups from './instance-groups/main';
+import shared from './shared/main';
 
-import '../lib/components';
-import '../lib/models';
-import '../lib/services';
-import '../features';
+import atFeatures from '~features';
+import atLibComponents from '~components';
+import atLibModels from '~models';
+import atLibServices from '~services';
 
-angular.module('awApp', [
-    'I18N',
-    'AngularCodeMirrorModule',
-    'angular-duration-format',
-    'angularMoment',
-    'AngularScheduler',
-    'angular-md5',
-    'dndLists',
-    'ncy-angular-breadcrumb',
-    'ngSanitize',
-    'ngCookies',
-    'ngToast',
-    'gettext',
-    'Timezones',
-    'ui.router',
-    'ui.router.state.events',
-    'lrInfiniteScroll',
+start.bootstrap(() => {
+    angular.bootstrap(document.body, ['awApp']);
+});
 
-    about.name,
-    access.name,
-    license.name,
-    RestServices.name,
-    browserData.name,
-    configuration.name,
-    systemTracking.name,
-    inventoriesHosts.name,
-    inventoryScripts.name,
-    credentials.name,
-    credentialTypes.name,
-    organizations.name,
-    managementJobs.name,
-    breadCrumb.name,
-    home.name,
-    login.name,
-    activityStream.name,
-    workflowResults.name,
-    jobResults.name,
-    jobSubmission.name,
-    notifications.name,
-    standardOut.name,
-    Templates.name,
-    portalMode.name,
-    jobs.name,
-    teams.name,
-    users.name,
-    projects.name,
-    scheduler.name,
-    instanceGroups.name,
+angular
+    .module('awApp', [
+        'I18N',
+        'AngularCodeMirrorModule',
+        'angular-duration-format',
+        'angularMoment',
+        'AngularScheduler',
+        'dndLists',
+        'ncy-angular-breadcrumb',
+        'ngSanitize',
+        'ngCookies',
+        'ngToast',
+        'gettext',
+        'Timezones',
+        'lrInfiniteScroll',
+        shared.name,
+        about.name,
+        access.name,
+        license.name,
+        RestServices.name,
+        browserData.name,
+        configuration.name,
+        inventoriesHosts.name,
+        inventoryScripts.name,
+        credentials.name,
+        credentialTypes.name,
+        organizations.name,
+        managementJobs.name,
+        breadCrumb.name,
+        home.name,
+        login.name,
+        activityStream.name,
+        workflowResults.name,
+        jobSubmission.name,
+        notifications.name,
+        Templates.name,
+        teams.name,
+        users.name,
+        projects.name,
+        scheduler.name,
 
-    'Utilities',
-    'templates',
-    'PromptDialog',
-    'AWDirectives',
-    'features',
+        'Utilities',
+        'templates',
+        'PromptDialog',
+        'AWDirectives',
+        'features',
 
-    'at.lib.components',
-    'at.lib.models',
-    'at.lib.services',
-    'at.features',
-])
+        instanceGroups,
+        atFeatures,
+        atLibComponents,
+        atLibModels,
+        atLibServices
+    ])
     .constant('AngularScheduler.partials', urlPrefix + 'lib/angular-scheduler/lib/')
     .constant('AngularScheduler.useTimezone', true)
     .constant('AngularScheduler.showUTCField', true)
     .constant('$timezones.definitions.location', urlPrefix + 'lib/angular-tz-extensions/tz/data')
+    .config(['$locationProvider', function($locationProvider) {
+        $locationProvider.hashPrefix('');
+    }])
     .config(['$logProvider', function($logProvider) {
-        $logProvider.debugEnabled($ENV['ng-debug'] || false);
+        window.debug = function(){
+            $logProvider.debugEnabled(!$logProvider.debugEnabled());
+            return $logProvider.debugEnabled();
+        };
+        window.debug(false);
     }])
     .config(['ngToastProvider', function(ngToastProvider) {
         ngToastProvider.configure({
@@ -126,20 +121,20 @@ angular.module('awApp', [
             timeout: 4000
         });
     }])
-    .config(['$urlRouterProvider', '$breadcrumbProvider', 'QuerySetProvider',
-        '$urlMatcherFactoryProvider',
-        function($urlRouterProvider, $breadcrumbProvider, QuerySet,
-            $urlMatcherFactoryProvider) {
-            $urlMatcherFactoryProvider.strictMode(false);
+    .config(['$breadcrumbProvider', 'QuerySetProvider',
+        '$urlServiceProvider',
+        function($breadcrumbProvider, QuerySet,
+            $urlServiceProvider) {
+            $urlServiceProvider.config.strictMode(false);
             $breadcrumbProvider.setOptions({
                 templateUrl: urlPrefix + 'partials/breadcrumb.html'
             });
 
             // route to the details pane of /job/:id/host-event/:eventId if no other child specified
-            $urlRouterProvider.when('/jobs/*/host-event/*', '/jobs/*/host-event/*/details');
-            $urlRouterProvider.otherwise('/home');
+            $urlServiceProvider.rules.when('/jobs/*/host-event/*', '/jobs/*/host-event/*/details');
+            $urlServiceProvider.rules.otherwise('/home');
 
-            $urlMatcherFactoryProvider.type('queryset', {
+            $urlServiceProvider.config.type('queryset', {
                 // encoding
                 // from {operator__key1__comparator=value, ... }
                 // to "_search=operator:key:compator=value& ... "
@@ -171,12 +166,13 @@ angular.module('awApp', [
         'CheckLicense', '$location', 'Authorization', 'LoadBasePaths', 'Timer',
         'LoadConfig', 'Store', 'pendoService', 'Prompt', 'Rest',
         'Wait', 'ProcessErrors', '$state', 'GetBasePath', 'ConfigService',
-        'FeaturesService', '$filter', 'SocketService', 'AppStrings',
+        'FeaturesService', '$filter', 'SocketService', 'AppStrings', '$transitions',
         function($stateExtender, $q, $compile, $cookies, $rootScope, $log, $stateParams,
             CheckLicense, $location, Authorization, LoadBasePaths, Timer,
             LoadConfig, Store, pendoService, Prompt, Rest, Wait,
             ProcessErrors, $state, GetBasePath, ConfigService, FeaturesService,
-            $filter, SocketService, AppStrings) {
+            $filter, SocketService, AppStrings, $transitions) {
+
             $rootScope.$state = $state;
             $rootScope.$state.matches = function(stateName) {
                 return $state.current.name.search(stateName) > 0;
@@ -200,7 +196,7 @@ angular.module('awApp', [
             $rootScope.tabTitle = `Ansible ${$rootScope.BRAND_NAME}`;
             $rootScope.$watch('$state.current.ncyBreadcrumbLabel', function(title) {
                 title = (title) ? "| " + title : "";
-                $rootScope.tabTitle = `Ansible ${$rootScope.BRAND_NAME} ${title}`;
+                document.title = `Ansible ${$rootScope.BRAND_NAME} ${title}`;
             });
 
             function activateTab() {
@@ -218,7 +214,7 @@ angular.module('awApp', [
             if ($rootScope.removeConfigReady) {
                 $rootScope.removeConfigReady();
             }
-            $rootScope.removeConfigReady = $rootScope.$on('ConfigReady', function() {
+            $rootScope.removeConfigReady = $rootScope.$on('ConfigReady', function(evt) {
                 var list, id;
                 // initially set row edit indicator for crud pages
                 if ($location.$$path && $location.$$path.split("/")[3] && $location.$$path.split("/")[3] === "schedules") {
@@ -238,26 +234,7 @@ angular.module('awApp', [
 
                 $rootScope.crumbCache = [];
 
-                $rootScope.$on("$stateChangeStart", function (event, next) {
-                    // let current_title = $rootScope.$state.current.ncyBreadcrumbLabel || "";
-                    // $rootScope.tabTitle = `Ansible ${$rootScope.BRAND_NAME} ${current_title}`;
-                    // Remove any lingering intervals
-                    // except on jobResults.* states
-                    var jobResultStates = [
-                        'jobResult',
-                        'jobResult.host-summary',
-                        'jobResult.host-event.details',
-                        'jobResult.host-event.json',
-                        'jobResult.host-events',
-                        'jobResult.host-event.stdout'
-                    ];
-                    if ($rootScope.jobResultInterval && !_.includes(jobResultStates, next.name) ) {
-                        window.clearInterval($rootScope.jobResultInterval);
-                    }
-                    if ($rootScope.jobStdOutInterval && !_.includes(jobResultStates, next.name) ) {
-                        window.clearInterval($rootScope.jobStdOutInterval);
-                    }
-
+                $transitions.onStart({}, function(trans) {
                     $rootScope.flashMessage = null;
 
                     $('#form-modal2 .modal-body').empty();
@@ -270,9 +247,13 @@ angular.module('awApp', [
                         $(this).remove();
                     });
 
-                    $('.ui-dialog-content').each(function() {
-                        $(this).dialog('close');
-                    });
+                    if (trans.to().name !== "templates.editWorkflowJobTemplate.workflowMaker" &&
+                        trans.to().name !== "templates.editWorkflowJobTemplate.workflowMaker.inventory" &&
+                        trans.to().name !== "templates.editWorkflowJobTemplate.workflowMaker.credential") {
+                            $('.ui-dialog-content').each(function() {
+                                $(this).dialog('close');
+                            });
+                    }
 
                     try {
                         $('#help-modal').dialog('close');
@@ -289,42 +270,41 @@ angular.module('awApp', [
                     }
 
                     if (Authorization.isUserLoggedIn() === false) {
-                        if (next.name !== "signIn") {
+                        if (trans.to().name !== "signIn") {
                             $state.go('signIn');
                         }
                     } else if ($rootScope && $rootScope.sessionTimer && $rootScope.sessionTimer.isExpired()) {
                       // gets here on timeout
-                        if (next.name !== "signIn") {
+                        if (trans.to().name !== "signIn") {
                             $state.go('signIn');
                         }
                     } else {
                         if ($rootScope.current_user === undefined || $rootScope.current_user === null) {
                             Authorization.restoreUserInfo(); //user must have hit browser refresh
                         }
-                        if (next && (next.name !== "signIn"  && next.name !== "signOut" && next.name !== "license")) {
+                        if (trans.to().name && (trans.to().name !== "signIn"  && trans.to().name !== "signOut" && trans.to().name !== "license")) {
                             ConfigService.getConfig().then(function() {
                                 // if not headed to /login or /logout, then check the license
-                                CheckLicense.test(event);
+                                CheckLicense.test(evt);
                             });
                         }
                     }
                     activateTab();
                 });
 
-                $rootScope.$on('$stateChangeSuccess', function(event, toState, toParams, fromState, fromParams) {
-
-                    if(toState === fromState) {
+                $transitions.onSuccess({}, function(trans) {
+                    if(trans.to() === trans.from()) {
                         // check to see if something other than a search param has changed
                         let toParamsWithoutSearchKeys = {};
                         let fromParamsWithoutSearchKeys = {};
-                        for (let key in toParams) {
-                            if (toParams.hasOwnProperty(key) && !/_search/.test(key)) {
-                                toParamsWithoutSearchKeys[key] = toParams[key];
+                        for (let key in trans.params('to')) {
+                            if (trans.params('to').hasOwnProperty(key) && !/_search/.test(key)) {
+                                toParamsWithoutSearchKeys[key] = trans.params('to')[key];
                             }
                         }
-                        for (let key in fromParams) {
-                            if (fromParams.hasOwnProperty(key) && !/_search/.test(key)) {
-                                fromParamsWithoutSearchKeys[key] = fromParams[key];
+                        for (let key in trans.params('from')) {
+                            if (trans.params('from').hasOwnProperty(key) && !/_search/.test(key)) {
+                                fromParamsWithoutSearchKeys[key] = trans.params('from')[key];
                             }
                         }
 
@@ -336,8 +316,8 @@ angular.module('awApp', [
                         document.body.scrollTop = document.documentElement.scrollTop = 0;
                     }
 
-                    if (fromState.name === 'license' && toParams.hasOwnProperty('licenseMissing')) {
-                        $rootScope.licenseMissing = toParams.licenseMissing;
+                    if (trans.from().name === 'license' && trans.params('to').hasOwnProperty('licenseMissing')) {
+                        $rootScope.licenseMissing = trans.params('to').licenseMissing;
                     }
                     var list, id;
                     // broadcast event change if editing crud object
@@ -367,9 +347,13 @@ angular.module('awApp', [
                     } else {
                         $rootScope.$broadcast("RemoveIndicator");
                     }
+
+                    if(_.includes(trans.from().name, 'output') && trans.to().name === 'jobs'){
+                        $state.reload();
+                    }
                 });
 
-                if (!Authorization.getToken() || !Authorization.isUserLoggedIn()) {
+                if (!Authorization.isUserLoggedIn()) {
                     // User not authenticated, redirect to login page
                     if (!/^\/(login|logout)/.test($location.path())) {
                         $rootScope.preAuthUrl = $location.path();
@@ -390,7 +374,7 @@ angular.module('awApp', [
                     $rootScope.user_is_system_auditor = Authorization.getUserInfo('is_system_auditor');
 
                     // state the user refreshes we want to open the socket, except if the user is on the login page, which should happen after the user logs in (see the AuthService module for that call to OpenSocket)
-                    if (!_.contains($location.$$url, '/login')) {
+                    if (!_.includes($location.$$url, '/login')) {
                         ConfigService.getConfig().then(function() {
                             Timer.init().then(function(timer) {
                                 $rootScope.sessionTimer = timer;

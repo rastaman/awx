@@ -6,7 +6,6 @@
 import os
 import glob
 import sys
-import subprocess
 from setuptools import setup
 from distutils.command.sdist import sdist
 
@@ -22,12 +21,8 @@ docdir = "/usr/share/doc/awx"
 def get_version():
     current_dir = os.path.dirname(os.path.abspath(__file__))
     version_file = os.path.join(current_dir, 'VERSION')
-    if os.path.isfile(version_file):
-        with open(version_file, 'r') as file:
-            version = file.read().strip()
-    else:
-        version = subprocess.Popen("git describe --long | cut -d - -f 1-1", shell=True, stdout=subprocess.PIPE).stdout.read().strip()
-    return version
+    with open(version_file, 'r') as file:
+        return file.read().strip()
 
 
 if os.path.exists("/etc/debian_version"):
@@ -52,6 +47,7 @@ else:
 
 class sdist_isolated(sdist):
     includes = [
+        'include VERSION',
         'include Makefile',
         'include awx/__init__.py',
         'include awx/main/expect/run.py',
@@ -59,6 +55,10 @@ class sdist_isolated(sdist):
         'include requirements/requirements_isolated.txt',
         'recursive-include awx/lib *.py',
     ]
+
+    def __init__(self, dist):
+        sdist.__init__(self, dist)
+        dist.metadata.version = get_version()
 
     def get_file_list(self):
         self.filelist.process_template_line('include setup.py')
@@ -150,9 +150,7 @@ setup(
     },
     data_files = proc_data_files([
         ("%s" % homedir,        ["config/wsgi.py",
-                                 "awx/static/favicon.ico",
-                                 "awx/locale/*/LC_MESSAGES/*.po",
-                                 "awx/locale/*/LC_MESSAGES/*.mo"]),
+                                 "awx/static/favicon.ico"]),
         ("%s" % siteconfig,      ["config/awx-nginx.conf"]),
         #        ("%s" % webconfig,      ["config/uwsgi_params"]),
         ("%s" % sharedir,       ["tools/scripts/request_tower_configuration.sh","tools/scripts/request_tower_configuration.ps1"]),

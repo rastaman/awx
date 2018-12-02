@@ -30,14 +30,11 @@ export default ['$state', '$stateParams', '$scope', 'ParseVariableString', 'rbac
             $scope.parseType = 'yaml';
             $scope.envParseType = 'yaml';
 
-            $rootScope.$on('$stateChangeSuccess', function(event, toState) {
-                if(toState.name === 'inventories.edit.groups.edit') {
-                    ParseTypeChange({
-                        scope: $scope,
-                        field_id: 'group_group_variables',
-                        variable: 'group_variables',
-                    });
-                }
+
+            ParseTypeChange({
+                scope: $scope,
+                field_id: 'group_group_variables',
+                variable: 'group_variables',
             });
         }
 

@@ -1,21 +1,22 @@
-const templateUrl = require('@components/input/group.partial.html');
+const templateUrl = require('~components/input/group.partial.html');
 
 function atInputGroupLink (scope, el, attrs, controllers) {
-    let groupController = controllers[0];
-    let formController = controllers[1];
-    let element = el[0].getElementsByClassName('at-InputGroup-container')[0];
-    
+    const groupController = controllers[0];
+    const formController = controllers[1];
+    const element = el[0].getElementsByClassName('at-InputGroup-container')[0];
+
     groupController.init(scope, formController, element);
 }
 
 function AtInputGroupController ($scope, $compile) {
-    let vm = this || {};
+    const vm = this || {};
 
     let form;
     let scope;
     let state;
     let source;
     let element;
+    let formId;
 
     vm.init = (_scope_, _form_, _element_) => {
         form = _form_;
@@ -23,6 +24,7 @@ function AtInputGroupController ($scope, $compile) {
         element = _element_;
         state = scope.state || {};
         source = state._source;
+        ({ formId } = scope);
 
         $scope.$watch('state._source._value', vm.update);
     };
@@ -31,7 +33,7 @@ function AtInputGroupController ($scope, $compile) {
         if (!source._value || source._value === state._value) {
             return false;
         }
-        
+
         return true;
     };
 
@@ -46,15 +48,15 @@ function AtInputGroupController ($scope, $compile) {
 
         state._value = source._value;
 
-        let inputs = state._get(source._value);
-        let group = vm.createComponentConfigs(inputs);
+        const inputs = state._get(source._value);
+        const group = vm.createComponentConfigs(inputs);
 
         vm.insert(group);
         state._group = group;
     };
 
     vm.createComponentConfigs = inputs => {
-        let group = [];
+        const group = [];
 
         if (inputs) {
             inputs.forEach((input, i) => {
@@ -73,7 +75,7 @@ function AtInputGroupController ($scope, $compile) {
     };
 
     vm.getComponentType = input => {
-        let config = {};
+        const config = {};
 
         if (input.type === 'string') {
             if (!input.multiline) {
@@ -99,23 +101,25 @@ function AtInputGroupController ($scope, $compile) {
             config._component = 'at-input-number';
         } else if (input.type === 'boolean') {
             config._component = 'at-input-checkbox';
+        } else if (input.type === 'file') {
+            config._component = 'at-input-file';
         } else if (input.choices) {
             config._component = 'at-input-select';
             config._format = 'array';
             config._data = input.choices;
             config._exp = 'choice for (index, choice) in state._data';
         } else {
-            let preface = vm.strings.get('group.UNSUPPORTED_ERROR_PREFACE');
-            throw new Error(`${preface}: ${input.type}`)
+            const preface = vm.strings.get('group.UNSUPPORTED_ERROR_PREFACE');
+            throw new Error(`${preface}: ${input.type}`);
         }
 
         return config;
     };
 
     vm.insert = group => {
-        let container = document.createElement('div');
+        const container = document.createElement('div');
         let col = 1;
-        let colPerRow = 12 / scope.col;
+        const colPerRow = 12 / scope.col;
         let isDivided = true;
 
         group.forEach((input, i) => {
@@ -125,7 +129,7 @@ function AtInputGroupController ($scope, $compile) {
 
             container.appendChild(input._element[0]);
 
-            if ((input._expand || col % colPerRow === 0) && i !== group.length -1) {
+            if ((input._expand || col % colPerRow === 0) && i !== group.length - 1) {
                 container.appendChild(vm.createDivider()[0]);
                 isDivided = true;
                 col = 0;
@@ -140,21 +144,19 @@ function AtInputGroupController ($scope, $compile) {
     };
 
     vm.createComponent = (input, index) => {
-        let tabindex = Number(scope.tab) + index;
-        let col = input._expand ? 12 : scope.col;
-        let component = angular.element(
-            `<${input._component} col="${col}" tab="${tabindex}"
-                state="${state._reference}._group[${index}]">
-            </${input._component}>`
-        );
+        const tabindex = Number(scope.tab) + index;
+        const col = input._expand ? 12 : scope.col;
+        const component = angular.element(`<${input._component} col="${col}" tab="${tabindex}"
+                state="${state._reference}._group[${index}]" id="${formId}_${input.id}_group">
+            </${input._component}>`);
 
-        $compile(component)(scope.$parent)
+        $compile(component)(scope.$parent);
 
         return component;
     };
 
     vm.createDivider = () => {
-        let divider = angular.element('<at-divider></at-divider>');
+        const divider = angular.element('<at-divider></at-divider>');
         $compile(divider[0])(scope.$parent);
 
         return divider;
@@ -183,7 +185,8 @@ function atInputGroup () {
         scope: {
             state: '=',
             col: '@',
-            tab: '@'
+            tab: '@',
+            formId: '@'
         }
     };
 }

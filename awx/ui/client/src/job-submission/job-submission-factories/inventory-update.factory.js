@@ -24,13 +24,6 @@ export default
                 }
             });
 
-            if (scope.removePromptForPasswords) {
-                scope.removePromptForPasswords();
-            }
-            scope.removePromptForPasswords = scope.$on('PromptForPasswords', function() {
-                PromptForPasswords({ scope: scope, passwords: inventory_source.passwords_needed_to_update, callback: 'StartTheUpdate' });
-            });
-
             if (scope.removeStartTheUpdate) {
                 scope.removeStartTheUpdate();
             }
@@ -42,37 +35,22 @@ export default
             Wait('start');
             Rest.setUrl(url);
             Rest.get()
-            .success(function (data) {
+            .then(({data}) => {
                 if(params.updateAllSources) {
-                    let userCanUpdateAllSources = true;
-                    _.forEach(data, function(inventory_source){
-                        if (!inventory_source.can_update) {
-                            userCanUpdateAllSources = false;
-                        }
-                    });
-
-                    if(userCanUpdateAllSources) {
-                        scope.$emit('StartTheUpdate', {});
-                    }
+                    scope.$emit('StartTheUpdate', {});
                 }
                 else {
                     inventory_source = data;
                     if (data.can_update) {
-                        if (data.passwords_needed_to_update) {
-                            Wait('stop');
-                            scope.$emit('PromptForPasswords');
-                        }
-                        else {
-                            scope.$emit('StartTheUpdate', {});
-                        }
+                        scope.$emit('StartTheUpdate', {});
                     } else {
                         Wait('stop');
-                        Alert('Permission Denied', 'You do not have access to run the inventory sync. Please contact your system administrator.',
+                        Alert('Error Launching Sync', 'Unable to execute the inventory sync. Please contact your system administrator.',
                         'alert-danger');
                     }
                 }
             })
-            .error(function (data, status) {
+            .catch(({data, status}) => {
                 ProcessErrors(scope, data, status, null, { hdr: 'Error!',
                 msg: 'Failed to get inventory source ' + url + ' GET returned: ' + status });
                 });

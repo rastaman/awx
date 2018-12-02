@@ -32,7 +32,7 @@ angular.module('Organizations', [
             // lazily generate a tree of substates which will replace this node in ui-router's stateRegistry
             // see: stateDefinition.factory for usage documentation
             $stateProvider.state({
-                name: 'organizations',
+                name: 'organizations.**',
                 url: '/organizations',
                 lazyLoad: () => stateDefinitions.generateTree({
                     parent: 'organizations', // top-most node in the generated tree
@@ -55,7 +55,32 @@ angular.module('Organizations', [
                         activityStreamTarget: 'organization'
                     },
                     resolve: {
+                        add: {
+                            ConfigData: ['ConfigService', 'ProcessErrors', (ConfigService, ProcessErrors) => {
+                                return ConfigService.getConfig()
+                                    .then(response => response)
+                                    .catch(({data, status}) => {
+                                        ProcessErrors(null, data, status, null, {
+                                            hdr: 'Error!',
+                                            msg: 'Failed to get config. GET returned status: ' +
+                                                'status: ' + status
+                                        });
+                                    });
+
+                            }]
+                        },
                         edit: {
+                            ConfigData: ['ConfigService', 'ProcessErrors', (ConfigService, ProcessErrors) => {
+                                return ConfigService.getConfig()
+                                    .then(response => response)
+                                    .catch(({data, status}) => {
+                                        ProcessErrors(null, data, status, null, {
+                                            hdr: 'Error!',
+                                            msg: 'Failed to get config. GET returned status: ' +
+                                                'status: ' + status
+                                        });
+                                    });
+                            }],
                             InstanceGroupsData: ['$stateParams', 'Rest', 'GetBasePath', 'ProcessErrors',
                                 function($stateParams, Rest, GetBasePath, ProcessErrors){
                                     let path = `${GetBasePath('organizations')}${$stateParams.organization_id}/instance_groups/`;

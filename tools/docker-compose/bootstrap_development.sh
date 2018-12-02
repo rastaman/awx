@@ -1,6 +1,12 @@
 #!/bin/bash
 set +x
 
+if [ `id -u` -ge 500 ] || [ -z "${CURRENT_UID}" ]; then
+    echo "awx:x:`id -u`:`id -g`:,,,:/tmp:/bin/bash" >> /tmp/passwd
+    cat /tmp/passwd > /etc/passwd
+    rm /tmp/passwd
+fi
+
 # Wait for the databases to come up
 ansible -i "127.0.0.1," -c local -v -m wait_for -a "host=postgres port=5432" all
 ansible -i "127.0.0.1," -c local -v -m wait_for -a "host=memcached port=11211" all
@@ -21,10 +27,7 @@ else
     echo "Failed to find awx source tree, map your development tree volume"
 fi
 
-cp -R /tmp/awx.egg-info /awx_devel/ || true
-sed -i "s/placeholder/$(git describe --long | sed 's/\./\\./g')/" /awx_devel/awx.egg-info/PKG-INFO
-cp /tmp/awx.egg-link /venv/awx/lib/python2.7/site-packages/awx.egg-link
-ln -s /awx_devel/tools/rdb.py /venv/awx/lib/python2.7/site-packages/rdb.py || true
+make awx-link
 yes | cp -rf /awx_devel/tools/docker-compose/supervisor.conf /supervisor.conf
 
 # AWX bootstrapping

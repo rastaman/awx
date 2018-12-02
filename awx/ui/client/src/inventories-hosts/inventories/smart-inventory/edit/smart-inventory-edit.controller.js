@@ -37,15 +37,12 @@ function SmartInventoryEdit($scope, $location,
 
         $scope.parseType = 'yaml';
 
-        $rootScope.$on('$stateChangeSuccess', function(event, toState) {
-            if(toState.name === 'inventories.editSmartInventory') {
-                ParseTypeChange({
-                    scope: $scope,
-                    variable: 'smartinventory_variables',
-                    parse_variable: 'parseType',
-                    field_id: 'smartinventory_smartinventory_variables'
-                });
-            }
+
+        ParseTypeChange({
+            scope: $scope,
+            variable: 'smartinventory_variables',
+            parse_variable: 'parseType',
+            field_id: 'smartinventory_smartinventory_variables'
         });
 
         OrgAdminLookup.checkForAdminAccess({organization: inventoryData.organization})
@@ -77,7 +74,7 @@ function SmartInventoryEdit($scope, $location,
 
         Rest.setUrl(defaultUrl + inventory_id + '/');
         Rest.put(data)
-            .success(function() {
+            .then(() => {
                 InstanceGroupsService.editInstanceGroups(instance_group_url, $scope.instance_groups)
                     .then(() => {
                         Wait('stop');
@@ -90,7 +87,7 @@ function SmartInventoryEdit($scope, $location,
                         });
                     });
             })
-            .error(function(data, status) {
+            .catch(({data, status}) => {
                 ProcessErrors($scope, data, status, form, {
                     hdr: 'Error!',
                     msg: 'Failed to update inventory. PUT returned status: ' + status

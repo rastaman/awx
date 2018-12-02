@@ -1,23 +1,23 @@
-let BaseModel;
+let Base;
 
-function MeModel (method, resource, graft) {
-    BaseModel.call(this, 'me');
+function MeModel (method, resource, config) {
+    Base.call(this, 'me');
 
     this.Constructor = MeModel;
 
-    return this.create(method, resource, graft)
+    return this.create(method, resource, config)
         .then(() => {
             if (this.has('results')) {
                 _.merge(this.model.GET, this.get('results[0]'));
                 this.unset('results');
             }
 
-             return this;
+            return this;
         });
 }
 
-function MeModelLoader (_BaseModel_) {
-    BaseModel = _BaseModel_;
+function MeModelLoader (BaseModel) {
+    Base = BaseModel;
 
     return MeModel;
 }

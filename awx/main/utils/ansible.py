@@ -13,7 +13,7 @@ from django.utils.encoding import smart_str
 __all__ = ['skip_directory', 'could_be_playbook', 'could_be_inventory']
 
 
-valid_playbook_re = re.compile(r'^\s*?-?\s*?(?:hosts|include):\s*?.*?$')
+valid_playbook_re = re.compile(r'^\s*?-?\s*?(?:hosts|include|import_playbook):\s*?.*?$')
 valid_inventory_re = re.compile(r'^[a-zA-Z0-9_.=\[\]]')
 
 
@@ -44,7 +44,7 @@ def could_be_playbook(project_path, dir_path, filename):
     # show up.
     matched = False
     try:
-        for n, line in enumerate(file(playbook_path)):
+        for n, line in enumerate(open(playbook_path)):
             if valid_playbook_re.match(line):
                 matched = True
             # Any YAML file can also be encrypted with vault;
@@ -61,10 +61,14 @@ def could_be_playbook(project_path, dir_path, filename):
 def could_be_inventory(project_path, dir_path, filename):
     # Decisions based exclusively on filename
     inventory_path = os.path.join(dir_path, filename)
+    inventory_rel_path = os.path.relpath(inventory_path, smart_str(project_path))
     suspected_ext = os.path.splitext(filename)[-1]
-    if suspected_ext in ['.yml', '.yaml', '.ini'] or os.access(inventory_path, os.X_OK):
+    if filename in ['inventory', 'hosts']:
+        # Users commonly name their inventory files these names
+        return inventory_rel_path
+    elif suspected_ext == '.ini' or os.access(inventory_path, os.X_OK):
         # Files with any of these extensions are always included
-        return os.path.relpath(inventory_path, smart_str(project_path))
+        return inventory_rel_path
     elif '.' in suspected_ext:
         # If not using those extensions, inventory must have _no_ extension
         return None
@@ -79,4 +83,4 @@ def could_be_inventory(project_path, dir_path, filename):
                     return None
     except IOError:
         return None
-    return os.path.relpath(inventory_path, smart_str(project_path))
+    return inventory_rel_path

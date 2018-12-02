@@ -1,11 +1,11 @@
-const templateUrl = require('@components/input/lookup.partial.html');
+const templateUrl = require('~components/input/lookup.partial.html');
 
 const DEFAULT_DEBOUNCE = 250;
 const DEFAULT_KEY = 'name';
 
 function atInputLookupLink (scope, element, attrs, controllers) {
-    let formController = controllers[0];
-    let inputController = controllers[1];
+    const formController = controllers[0];
+    const inputController = controllers[1];
 
     if (scope.tab === '1') {
         element.find('input')[0].focus();
@@ -14,8 +14,8 @@ function atInputLookupLink (scope, element, attrs, controllers) {
     inputController.init(scope, element, formController);
 }
 
-function AtInputLookupController (baseInputController, $q, $state, $stateParams) {
-    let vm = this || {};
+function AtInputLookupController (baseInputController, $q, $state) {
+    const vm = this || {};
 
     let scope;
     let model;
@@ -34,25 +34,22 @@ function AtInputLookupController (baseInputController, $q, $state, $stateParams)
             }
         };
 
-        scope.$watch(scope.state._resource, vm.watchResource);
+        // This should get triggered when the user selects something in the lookup modal and
+        // hits save to close the modal.  This won't get triggered when the user types in
+        // a value in the input.
+        scope.$watch('state._idFromModal', () => {
+            if (scope.state._idFromModal &&
+                (scope.state._idFromModal !== scope.state._value)
+            ) {
+                vm.search({ id: scope.state._idFromModal });
+            }
+        });
 
         vm.check();
     };
 
-    vm.watchResource = () => {
-        if (!scope[scope.state._resource]) {
-            return;
-        }
-
-        if (scope[scope.state._resource] !== scope.state._value) {
-            scope.state._displayValue = scope[`${scope.state._resource}_name`];
-
-            vm.search();
-        }
-    };
-
     vm.lookup = () => {
-        let params = {};
+        const params = {};
 
         if (scope.state._value && scope.state._isValid) {
             params.selected = scope.state._value;
@@ -62,6 +59,7 @@ function AtInputLookupController (baseInputController, $q, $state, $stateParams)
     };
 
     vm.reset = () => {
+        scope.state._idFromModal = undefined;
         scope.state._value = undefined;
         scope[scope.state._resource] = undefined;
     };
@@ -77,30 +75,39 @@ function AtInputLookupController (baseInputController, $q, $state, $stateParams)
 
     vm.resetDebounce = () => {
         clearTimeout(vm.debounce);
-        vm.searchAfterDebounce(); 
+        vm.searchAfterDebounce();
     };
 
-    vm.search = () => {
+    vm.search = (searchParams) => {
         scope.state._touched = true;
 
-        if (scope.state._displayValue === '' && !scope.state._required) {
+        if (!scope.state._required &&
+            scope.state._displayValue === '' &&
+            !scope.state._idFromModal
+        ) {
+            scope.state._value = null;
             return vm.check({ isValid: true });
         }
 
-        return model.search({ [search.key]: scope.state._displayValue }, search.config)
+        searchParams = searchParams || { [search.key]: scope.state._displayValue };
+
+        return model.search(searchParams, search.config)
             .then(found => {
                 if (!found) {
-                    return vm.reset();
+                    vm.reset();
+
+                    return;
                 }
 
                 scope[scope.state._resource] = model.get('id');
                 scope.state._value = model.get('id');
                 scope.state._displayValue = model.get('name');
+                scope.state._idFromModal = undefined;
             })
             .catch(() => vm.reset())
             .finally(() => {
-                let isValid = scope.state._value !== undefined;
-                let message = isValid ? '' : vm.strings.get('lookup.NOT_FOUND');
+                const isValid = scope.state._value !== undefined;
+                const message = isValid ? '' : vm.strings.get('lookup.NOT_FOUND');
 
                 vm.check({ isValid, message });
             });
@@ -108,18 +115,23 @@ function AtInputLookupController (baseInputController, $q, $state, $stateParams)
 
     vm.searchOnInput = () => {
         if (vm.isDebouncing) {
-            return vm.resetDebounce();
+            vm.resetDebounce();
+
+            return;
         }
 
         vm.searchAfterDebounce();
+    };
+
+    vm.removeTag = (tagToRemove) => {
+        _.remove(scope.state._value, (tag) => tag === tagToRemove);
     };
 }
 
 AtInputLookupController.$inject = [
     'BaseInputController',
     '$q',
-    '$state',
-    '$stateParams'
+    '$state'
 ];
 
 function atInputLookup () {

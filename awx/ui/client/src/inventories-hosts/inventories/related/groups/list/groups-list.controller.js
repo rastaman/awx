@@ -7,11 +7,11 @@
     ['$scope', '$rootScope', '$state', '$stateParams', 'GroupList', 'InventoryUpdate',
     'GroupsService', 'CancelSourceUpdate', 'rbacUiControlService', 'GetBasePath',
     'GetHostsStatusMsg', 'Dataset', 'Find', 'QuerySet', 'inventoryData', 'canAdd',
-    'InventoryHostsStrings',
+    'InventoryHostsStrings', '$transitions',
     function($scope, $rootScope, $state, $stateParams, GroupList, InventoryUpdate,
         GroupsService, CancelSourceUpdate, rbacUiControlService, GetBasePath,
         GetHostsStatusMsg, Dataset, Find, qs, inventoryData, canAdd,
-        InventoryHostsStrings){
+        InventoryHostsStrings, $transitions){
 
         let list = GroupList;
 
@@ -127,7 +127,7 @@
         $scope.confirmDelete = function(){
             let reloadListStateParams = null;
 
-            if($scope.groups.length === 1 && $state.params.group_search && !_.isEmpty($state.params.group_search.page) && $state.params.group_search.page !== '1') {
+            if($scope.groups.length === 1 && $state.params.group_search && _.has($state, 'params.group_search.page') && $state.params.group_search.page !== '1') {
                 reloadListStateParams = _.cloneDeep($state.params);
                 reloadListStateParams.group_search.page = (parseInt(reloadListStateParams.group_search.page)-1).toString();
             }
@@ -141,9 +141,11 @@
                             } else {
                                 $state.go($state.current, reloadListStateParams, {reload: true});
                             }
-                            $('#group-delete-modal').modal('hide');
-                            $('body').removeClass('modal-open');
-                            $('.modal-backdrop').remove();
+                            setTimeout(function(){
+                                $('#group-delete-modal').modal('hide');
+                                $('body').removeClass('modal-open');
+                                $('.modal-backdrop').remove();
+                            }, 1000);
                         });
                     break;
                 default:
@@ -153,9 +155,11 @@
                         } else {
                             $state.go($state.current, reloadListStateParams, {reload: true});
                         }
-                        $('#group-delete-modal').modal('hide');
-                        $('body').removeClass('modal-open');
-                        $('.modal-backdrop').remove();
+                        setTimeout(function(){
+                            $('#group-delete-modal').modal('hide');
+                            $('body').removeClass('modal-open');
+                            $('.modal-backdrop').remove();
+                        }, 1000);
                     });
             }
         };
@@ -173,9 +177,9 @@
             CancelSourceUpdate({ scope: $scope, id: id });
         };
 
-        var cleanUpStateChangeListener = $rootScope.$on('$stateChangeSuccess', function(event, toState, toParams) {
-             if (toState.name === "inventories.edit.groups.edit") {
-                 $scope.rowBeingEdited = toParams.group_id;
+        var cleanUpStateChangeListener = $transitions.onSuccess({}, function(trans) {
+             if (trans.to().name === "inventories.edit.groups.edit") {
+                 $scope.rowBeingEdited = trans.params('to').group_id;
                  $scope.listBeingEdited = "groups";
              }
              else {

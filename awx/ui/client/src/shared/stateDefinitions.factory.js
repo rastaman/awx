@@ -86,7 +86,11 @@ function($injector, $stateExtender, $log, i18n) {
                         });
                         html = generateList.wrapPanel(html);
                         // generateList.formView() inserts a ui-view="form" inside the list view's hierarchy
-                        return generateList.insertFormView() + html;
+                        html = generateList.insertFormView() + html;
+                        if(params.generateSchedulerView){
+                            html = generateList.insertSchedulerView() + html;
+                        }
+                        return html;
                     };
                 }
             }
@@ -205,9 +209,10 @@ function($injector, $stateExtender, $log, i18n) {
                             FormDefinition: [params.form, function(definition) {
                                 return definition;
                             }],
-                            resourceData: ['FormDefinition', 'Rest', '$stateParams', 'GetBasePath',
-                                function(FormDefinition, Rest, $stateParams, GetBasePath) {
+                            resourceData: ['FormDefinition', 'Rest', '$stateParams', 'GetBasePath', '$q', 'ProcessErrors',
+                                function(FormDefinition, Rest, $stateParams, GetBasePath, $q, ProcessErrors) {
                                     let form, path;
+                                    let deferred = $q.defer();
                                     form = typeof(FormDefinition) === 'function' ?
                                         FormDefinition() : FormDefinition;
                                     if (GetBasePath(form.basePath) === undefined && GetBasePath(form.stateTree) === undefined ){
@@ -217,7 +222,18 @@ function($injector, $stateExtender, $log, i18n) {
                                         path = (GetBasePath(form.basePath) || GetBasePath(form.stateTree) || form.basePath) + $stateParams[`${form.name}_id`];
                                     }
                                     Rest.setUrl(path);
-                                    return Rest.get();
+                                    Rest.get()
+                                        .then((response) => deferred.resolve(response))
+                                        .catch(({ data, status }) => {
+                                            ProcessErrors(null, data, status, null,
+                                                {
+                                                    hdr: i18n._('Error!'),
+                                                    msg: i18n._('Unable to get resource: ') + status
+                                                }
+                                            );
+                                            deferred.reject();
+                                        });
+                                    return deferred.promise;
                                 }
                             ]
                         },
@@ -722,21 +738,39 @@ function($injector, $stateExtender, $log, i18n) {
             function buildFieldDefinition(field) {
 
                 // Some lookup modals require some additional default params,
-                // namely organization and inventory_script. If these params
+                // namely organization and inventory_script, and insights
+                // credentials. If these params
                 // aren't set as default params out of the gate, then smart
                 // search will think they need to be set as search tags.
                 var params;
                 if(field.sourceModel === "organization"){
-                    params = {
-                        page_size: '5',
-                        role_level: 'admin_role'
-                    };
+                    if (form.name === "notification_template") {
+                        // Users with admin_role role level should also have
+                        // notification_admin_role so this should handle regular admin
+                        // users as well as notification admin users
+                        params = {
+                            page_size: '5',
+                            role_level: 'notification_admin_role'
+                        };
+                    } else {
+                        params = {
+                            page_size: '5',
+                            role_level: 'admin_role'
+                        };
+                    }
                 }
                 else if(field.sourceModel === "inventory_script"){
                     params = {
                         page_size: '5',
                         role_level: 'admin_role',
                         organization: null
+                    };
+                }
+                else if(field.sourceModel === "insights_credential"){
+                    params = {
+                        page_size: '5',
+                        role_level: 'admin_role',
+                        credential_type: null
                     };
                 }
                 else if(field.sourceModel === 'host') {
@@ -772,13 +806,19 @@ function($injector, $stateExtender, $log, i18n) {
                     views: {
                         'modal': {
                             templateProvider: function(ListDefinition, generateList) {
-                                let list_html = generateList.build({
+                                const listConfig = {
                                     mode: 'lookup',
                                     list: ListDefinition,
                                     input_type: 'radio'
-                                });
-                                return `<lookup-modal>${list_html}</lookup-modal>`;
+                                };
 
+                                if (field.lookupMessage) {
+                                    listConfig.lookupMessage = field.lookupMessage;
+                                }
+
+                                let list_html = generateList.build(listConfig);
+
+                                return `<lookup-modal>${list_html}</lookup-modal>`;
                             }
                         }
                     },
@@ -805,8 +845,24 @@ function($injector, $stateExtender, $log, i18n) {
                                     return;
                                 }
                         }],
-                        Dataset: ['ListDefinition', 'QuerySet', '$stateParams', 'GetBasePath', '$interpolate', '$rootScope', '$state', 'OrganizationId',
-                            (list, qs, $stateParams, GetBasePath, $interpolate, $rootScope, $state, OrganizationId) => {
+                        InsightsCredTypePK: ['ListDefinition', 'Rest', 'GetBasePath', 'ProcessErrors',
+                            function(list, Rest, GetBasePath,ProcessErrors) {
+                                if(list.iterator === 'insights_credential'){
+                                    Rest.setUrl(GetBasePath('credential_types') + '?name=Insights');
+                                    return Rest.get()
+                                        .then(({data}) => {
+                                            return data.results[0].id;
+                                        })
+                                        .catch(({data, status}) => {
+                                            ProcessErrors(null, data, status, null, {
+                                                hdr: 'Error!',
+                                                msg: 'Failed to get credential type data: ' + status
+                                            });
+                                        });
+                                }
+                        }],
+                        Dataset: ['ListDefinition', 'QuerySet', '$stateParams', 'GetBasePath', '$interpolate', '$rootScope', '$state', 'OrganizationId', 'InsightsCredTypePK',
+                            (list, qs, $stateParams, GetBasePath, $interpolate, $rootScope, $state, OrganizationId, InsightsCredTypePK) => {
                                 // allow lookup field definitions to use interpolated $stateParams / $rootScope in basePath field
                                 // the basePath on a form's lookup field will take precedence over the general model list's basepath
                                 let path, interpolator;
@@ -824,11 +880,26 @@ function($injector, $stateExtender, $log, i18n) {
                                 // Need to change the role_level here b/c organizations and inventory scripts
                                 // don't have a "use_role", only "admin_role" and "read_role"
                                 if(list.iterator === "organization"){
-                                    $stateParams[`${list.iterator}_search`].role_level = "admin_role";
+                                    if ($state.current.name.includes('inventories')) {
+                                        $stateParams[`${list.iterator}_search`].role_level = "inventory_admin_role";
+                                    } else if ($state.current.name.includes('projects')) {
+                                        $stateParams[`${list.iterator}_search`].role_level = "project_admin_role";
+                                    } else if ($state.current.name.includes('templates.addWorkflowJobTemplate') || $state.current.name.includes('templates.editWorkflowJobTemplate')) {
+                                        $stateParams[`${list.iterator}_search`].role_level = "workflow_admin_role";
+                                    }
                                 }
                                 if(list.iterator === "inventory_script"){
                                     $stateParams[`${list.iterator}_search`].role_level = "admin_role";
                                     $stateParams[`${list.iterator}_search`].organization = OrganizationId;
+                                }
+                                if(list.iterator === "insights_credential"){
+                                    $stateParams[`${list.iterator}_search`].role_level = "admin_role";
+                                    $stateParams[`${list.iterator}_search`].credential_type = InsightsCredTypePK.toString() ;
+                                }
+                                if(list.iterator === 'credential') {
+                                    if($state.current.name.includes('projects.edit') || $state.current.name.includes('projects.add')) {
+                                        state.params[`${list.iterator}_search`].value = _.merge(state.params[`${list.iterator}_search`].value, $stateParams[`${list.iterator}_search`]);
+                                    }
                                 }
 
                                 return qs.search(path, $stateParams[`${list.iterator}_search`]);

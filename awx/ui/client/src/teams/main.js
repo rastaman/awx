@@ -25,7 +25,7 @@ angular.module('Teams', [])
             // lazily generate a tree of substates which will replace this node in ui-router's stateRegistry
             // see: stateDefinition.factory for usage documentation
             $stateProvider.state({
-                name: 'teams',
+                name: 'teams.**',
                 url: '/teams',
                 lazyLoad: () => stateDefinitions.generateTree({
                     parent: 'teams',
@@ -40,6 +40,26 @@ angular.module('Teams', [])
                     data: {
                         activityStream: true,
                         activityStreamTarget: 'team'
+                    },
+                    resolve: {
+                        edit: {
+                            resolvedModels: ['MeModel', '$q', function(Me, $q) {
+                                const promises = {
+                                    me: new Me('get').then((me) => me.extend('get', 'admin_of_organizations'))
+                                };
+
+                                return $q.all(promises);
+                            }]
+                        },
+                        list: {
+                            resolvedModels: ['MeModel', '$q', function(Me, $q) {
+                                const promises = {
+                                    me: new Me('get')
+                                };
+
+                                return $q.all(promises);
+                            }]
+                        }
                     },
                     ncyBreadcrumb: {
                         label: N_('TEAMS')

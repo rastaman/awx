@@ -15,15 +15,26 @@ from django.utils.text import slugify
 from django.core.exceptions import ValidationError
 from django.utils.timezone import now, make_aware, get_default_timezone
 
+import six
+
 # AWX
 from awx.api.versioning import reverse
 from awx.main.models.base import * # noqa
+from awx.main.models.events import ProjectUpdateEvent
 from awx.main.models.notifications import (
     NotificationTemplate,
     JobNotificationMixin,
 )
-from awx.main.models.unified_jobs import * # noqa
-from awx.main.models.mixins import ResourceMixin, TaskManagerProjectUpdateMixin
+from awx.main.models.unified_jobs import (
+    UnifiedJob,
+    UnifiedJobTemplate,
+)
+from awx.main.models.mixins import (
+    ResourceMixin,
+    TaskManagerProjectUpdateMixin,
+    CustomVirtualEnvMixin,
+    RelatedJobsMixin
+)
 from awx.main.utils import update_scm_url
 from awx.main.utils.ansible import skip_directory, could_be_inventory, could_be_playbook
 from awx.main.fields import ImplicitRoleField
@@ -123,7 +134,7 @@ class ProjectOptions(models.Model):
     def clean_scm_url(self):
         if self.scm_type == 'insights':
             self.scm_url = settings.INSIGHTS_URL_BASE
-        scm_url = unicode(self.scm_url or '')
+        scm_url = six.text_type(self.scm_url or '')
         if not self.scm_type:
             return ''
         try:
@@ -134,7 +145,7 @@ class ProjectOptions(models.Model):
         scm_url_parts = urlparse.urlsplit(scm_url)
         if self.scm_type and not any(scm_url_parts):
             raise ValidationError(_('SCM URL is required.'))
-        return unicode(self.scm_url or '')
+        return six.text_type(self.scm_url or '')
 
     def clean_credential(self):
         if not self.scm_type:
@@ -222,12 +233,15 @@ class ProjectOptions(models.Model):
         return proj_path + '.lock'
 
 
-class Project(UnifiedJobTemplate, ProjectOptions, ResourceMixin):
+class Project(UnifiedJobTemplate, ProjectOptions, ResourceMixin, CustomVirtualEnvMixin, RelatedJobsMixin):
     '''
     A project represents a playbook git repo that can access a set of inventories
     '''
 
     SOFT_UNIQUE_TOGETHER = [('polymorphic_ctype', 'name', 'organization')]
+    FIELDS_TO_PRESERVE_AT_COPY = ['labels', 'instance_groups', 'credentials']
+    FIELDS_TO_DISCARD_AT_COPY = ['local_path']
+    FIELDS_TRIGGER_UPDATE = frozenset(['scm_url', 'scm_branch', 'scm_type'])
 
     class Meta:
         app_label = 'main'
@@ -239,10 +253,6 @@ class Project(UnifiedJobTemplate, ProjectOptions, ResourceMixin):
         null=True,
         on_delete=models.CASCADE,
         related_name='projects',
-    )
-    scm_delete_on_next_update = models.BooleanField(
-        default=False,
-        editable=False,
     )
     scm_update_on_launch = models.BooleanField(
         default=False,
@@ -281,7 +291,7 @@ class Project(UnifiedJobTemplate, ProjectOptions, ResourceMixin):
     )
 
     admin_role = ImplicitRoleField(parent_role=[
-        'organization.admin_role',
+        'organization.project_admin_role',
         'singleton:' + ROLE_SINGLETON_SYSTEM_ADMINISTRATOR,
     ])
 
@@ -306,26 +316,20 @@ class Project(UnifiedJobTemplate, ProjectOptions, ResourceMixin):
 
     @classmethod
     def _get_unified_job_field_names(cls):
-        return ['name', 'description', 'local_path', 'scm_type', 'scm_url',
-                'scm_branch', 'scm_clean', 'scm_delete_on_update',
-                'credential', 'schedule', 'timeout', 'launch_type',]
+        return set(f.name for f in ProjectOptions._meta.fields) | set(
+            ['name', 'description', 'schedule']
+        )
 
     def save(self, *args, **kwargs):
         new_instance = not bool(self.pk)
+        pre_save_vals = getattr(self, '_prior_values_store', {})
         # If update_fields has been specified, add our field names to it,
         # if it hasn't been specified, then we're just doing a normal save.
         update_fields = kwargs.get('update_fields', [])
         skip_update = bool(kwargs.pop('skip_update', False))
-        # Check if scm_type or scm_url changes.
-        if self.pk:
-            project_before = self.__class__.objects.get(pk=self.pk)
-            if project_before.scm_type != self.scm_type or project_before.scm_url != self.scm_url:
-                self.scm_delete_on_next_update = True
-                if 'scm_delete_on_next_update' not in update_fields:
-                    update_fields.append('scm_delete_on_next_update')
         # Create auto-generated local path if project uses SCM.
         if self.pk and self.scm_type and not self.local_path.startswith('_'):
-            slug_name = slugify(unicode(self.name)).replace(u'-', u'_')
+            slug_name = slugify(six.text_type(self.name)).replace(u'-', u'_')
             self.local_path = u'_%d__%s' % (int(self.pk), slug_name)
             if 'local_path' not in update_fields:
                 update_fields.append('local_path')
@@ -341,7 +345,12 @@ class Project(UnifiedJobTemplate, ProjectOptions, ResourceMixin):
                 with disable_activity_stream():
                     self.save(update_fields=update_fields)
         # If we just created a new project with SCM, start the initial update.
-        if new_instance and self.scm_type and not skip_update:
+        # also update if certain fields have changed
+        relevant_change = any(
+            pre_save_vals.get(fd_name, None) != self._prior_values_store.get(fd_name, None)
+            for fd_name in self.FIELDS_TRIGGER_UPDATE
+        )
+        if (relevant_change or new_instance) and (not skip_update) and self.scm_type:
             self.update()
 
     def _get_current_status(self):
@@ -376,19 +385,6 @@ class Project(UnifiedJobTemplate, ProjectOptions, ResourceMixin):
 
     def _can_update(self):
         return bool(self.scm_type)
-
-    def _update_unified_job_kwargs(self, create_kwargs, kwargs):
-        '''
-        :param create_kwargs: key-worded arguments to be updated and later used for creating unified job.
-        :type create_kwargs: dict
-        :param kwargs: request parameters used to override unified job template fields with runtime values.
-        :type kwargs: dict
-        :return: modified create_kwargs.
-        :rtype: dict
-        '''
-        if self.scm_delete_on_next_update:
-            create_kwargs['scm_delete_on_update'] = True
-        return create_kwargs
 
     def create_project_update(self, **kwargs):
         return self.create_unified_job(**kwargs)
@@ -437,6 +433,23 @@ class Project(UnifiedJobTemplate, ProjectOptions, ResourceMixin):
     def get_absolute_url(self, request=None):
         return reverse('api:project_detail', kwargs={'pk': self.pk}, request=request)
 
+    '''
+    RelatedJobsMixin
+    '''
+    def _get_related_jobs(self):
+        return UnifiedJob.objects.non_polymorphic().filter(
+            models.Q(Job___project=self) |
+            models.Q(ProjectUpdate___project=self)
+        )
+
+    def delete(self, *args, **kwargs):
+        path_to_delete = self.get_project_path(check_if_exists=False)
+        r = super(Project, self).delete(*args, **kwargs)
+        if self.scm_type and path_to_delete:  # non-manual, concrete path
+            from awx.main.tasks import delete_project_files
+            delete_project_files.delay(path_to_delete)
+        return r
+
 
 class ProjectUpdate(UnifiedJob, ProjectOptions, JobNotificationMixin, TaskManagerProjectUpdateMixin):
     '''
@@ -459,8 +472,7 @@ class ProjectUpdate(UnifiedJob, ProjectOptions, JobNotificationMixin, TaskManage
         default='check',
     )
 
-    @classmethod
-    def _get_parent_field_name(cls):
+    def _get_parent_field_name(self):
         return 'project'
 
     @classmethod
@@ -486,8 +498,12 @@ class ProjectUpdate(UnifiedJob, ProjectOptions, JobNotificationMixin, TaskManage
         return websocket_data
 
     @property
+    def event_class(self):
+        return ProjectUpdateEvent
+
+    @property
     def task_impact(self):
-        return 0 if self.job_type == 'run' else 20
+        return 0 if self.job_type == 'run' else 1
 
     @property
     def result_stdout(self):
@@ -507,24 +523,14 @@ class ProjectUpdate(UnifiedJob, ProjectOptions, JobNotificationMixin, TaskManage
         return reverse('api:project_update_detail', kwargs={'pk': self.pk}, request=request)
 
     def get_ui_url(self):
-        return urlparse.urljoin(settings.TOWER_URL_BASE, "/#/scm_update/{}".format(self.pk))
-
-    def _update_parent_instance(self):
-        parent_instance = self._get_parent_instance()
-        if parent_instance and self.job_type == 'check':
-            update_fields = self._update_parent_instance_no_save(parent_instance)
-            if self.status in ('successful', 'failed', 'error', 'canceled'):
-                if not self.failed and parent_instance.scm_delete_on_next_update:
-                    parent_instance.scm_delete_on_next_update = False
-                    if 'scm_delete_on_next_update' not in update_fields:
-                        update_fields.append('scm_delete_on_next_update')
-            parent_instance.save(update_fields=update_fields)
+        return urlparse.urljoin(settings.TOWER_URL_BASE, "/#/jobs/project/{}".format(self.pk))
 
     def cancel(self, job_explanation=None, is_chain=False):
         res = super(ProjectUpdate, self).cancel(job_explanation=job_explanation, is_chain=is_chain)
         if res and self.launch_type != 'sync':
             for inv_src in self.scm_inventory_updates.filter(status='running'):
-                inv_src.cancel(job_explanation='Source project update `{}` was canceled.'.format(self.name))
+                inv_src.cancel(job_explanation=six.text_type(
+                    'Source project update `{}` was canceled.').format(self.name))
         return res
 
     '''
@@ -547,3 +553,5 @@ class ProjectUpdate(UnifiedJob, ProjectOptions, JobNotificationMixin, TaskManage
         if not selected_groups:
             return self.global_instance_groups
         return selected_groups
+
+

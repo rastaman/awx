@@ -6,7 +6,13 @@ from __future__ import unicode_literals
 from psycopg2.extensions import AsIs
 
 # Django
-from django.db import migrations, models
+from django.db import (
+    connection,
+    migrations,
+    models,
+    OperationalError,
+    ProgrammingError
+)
 from django.conf import settings
 import taggit.managers
 
@@ -15,11 +21,23 @@ import awx.main.fields
 from awx.main.models import Host
 
 
+def replaces():
+    squashed = ['0005a_squashed_v310_v313_updates', '0005b_squashed_v310_v313_updates']
+    try:
+        recorder = migrations.recorder.MigrationRecorder(connection)
+        result = recorder.migration_qs.filter(app='main').filter(name__in=squashed).all()
+        return [('main', m.name) for m in result]
+    except (OperationalError, ProgrammingError):
+        return []
+
+
 class Migration(migrations.Migration):
 
     dependencies = [
         ('main', '0005_squashed_v310_v313_updates'),
     ]
+
+    replaces = replaces()
 
     operations = [
         # Release UJT unique_together constraint
@@ -145,12 +163,12 @@ class Migration(migrations.Migration):
         migrations.AlterField(
             model_name='inventorysource',
             name='source',
-            field=models.CharField(default=b'', max_length=32, blank=True, choices=[(b'', 'Manual'), (b'file', 'File, Directory or Script'), (b'scm', 'Sourced from a Project'), (b'ec2', 'Amazon EC2'), (b'gce', 'Google Compute Engine'), (b'azure', 'Microsoft Azure Classic (deprecated)'), (b'azure_rm', 'Microsoft Azure Resource Manager'), (b'vmware', 'VMware vCenter'), (b'satellite6', 'Red Hat Satellite 6'), (b'cloudforms', 'Red Hat CloudForms'), (b'openstack', 'OpenStack'), (b'custom', 'Custom Script')]),
+            field=models.CharField(default=b'', max_length=32, blank=True, choices=[(b'', 'Manual'), (b'file', 'File, Directory or Script'), (b'scm', 'Sourced from a Project'), (b'ec2', 'Amazon EC2'), (b'gce', 'Google Compute Engine'), (b'azure_rm', 'Microsoft Azure Resource Manager'), (b'vmware', 'VMware vCenter'), (b'satellite6', 'Red Hat Satellite 6'), (b'cloudforms', 'Red Hat CloudForms'), (b'openstack', 'OpenStack'), (b'custom', 'Custom Script')]),
         ),
         migrations.AlterField(
             model_name='inventoryupdate',
             name='source',
-            field=models.CharField(default=b'', max_length=32, blank=True, choices=[(b'', 'Manual'), (b'file', 'File, Directory or Script'), (b'scm', 'Sourced from a Project'), (b'ec2', 'Amazon EC2'), (b'gce', 'Google Compute Engine'), (b'azure', 'Microsoft Azure Classic (deprecated)'), (b'azure_rm', 'Microsoft Azure Resource Manager'), (b'vmware', 'VMware vCenter'), (b'satellite6', 'Red Hat Satellite 6'), (b'cloudforms', 'Red Hat CloudForms'), (b'openstack', 'OpenStack'), (b'custom', 'Custom Script')]),
+            field=models.CharField(default=b'', max_length=32, blank=True, choices=[(b'', 'Manual'), (b'file', 'File, Directory or Script'), (b'scm', 'Sourced from a Project'), (b'ec2', 'Amazon EC2'), (b'gce', 'Google Compute Engine'), (b'azure_rm', 'Microsoft Azure Resource Manager'), (b'vmware', 'VMware vCenter'), (b'satellite6', 'Red Hat Satellite 6'), (b'cloudforms', 'Red Hat CloudForms'), (b'openstack', 'OpenStack'), (b'custom', 'Custom Script')]),
         ),
         migrations.AlterField(
             model_name='inventorysource',
@@ -466,7 +484,7 @@ class Migration(migrations.Migration):
         migrations.AddField(
             model_name='instance',
             name='last_isolated_check',
-            field=models.DateTimeField(auto_now_add=True, null=True),
+            field=models.DateTimeField(editable=False, null=True),
         ),
         # Migrations that don't change db schema but simply to make Django ORM happy.
         # e.g. Choice updates, help_text updates, etc.

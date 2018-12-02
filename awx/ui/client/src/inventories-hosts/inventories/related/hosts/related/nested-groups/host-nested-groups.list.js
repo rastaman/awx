@@ -15,7 +15,7 @@
         hover: true,
         multiSelect: true,
         trackBy: 'nested_group.id',
-        basePath:  'api/v2/inventories/{{$stateParams.inventory_id}}/root_groups/',
+        basePath: 'api/v2/hosts/{{$stateParams.host_id}}/all_groups/',
 
         fields: {
             failed_hosts: {
@@ -67,8 +67,8 @@
                 mode: 'all',
                 ngClick: 'associateGroup()',
                 awToolTip: i18n._("Associate an existing group"),
-                actionClass: 'btn List-buttonSubmit',
-                buttonContent: '&#43; ' + i18n._('ASSOCIATE GROUP'),
+                actionClass: 'at-Button--add',
+                actionId: 'button-add',
                 ngShow: 'canAdd',
                 dataPlacement: "top",
             }

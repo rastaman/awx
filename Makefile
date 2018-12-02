@@ -11,11 +11,7 @@ GIT_BRANCH ?= $(shell git rev-parse --abbrev-ref HEAD)
 MANAGEMENT_COMMAND ?= awx-manage
 IMAGE_REPOSITORY_AUTH ?=
 IMAGE_REPOSITORY_BASE ?= https://gcr.io
-
-VERSION=$(shell git describe --long)
-VERSION3=$(shell git describe --long | sed 's/\-g.*//')
-VERSION3DOT=$(shell git describe --long | sed 's/\-g.*//' | sed 's/\-/\./')
-RELEASE_VERSION=$(shell git describe --long | sed 's@\([0-9.]\{1,\}\).*@\1@')
+VERSION := $(shell cat VERSION)
 
 # NOTE: This defaults the container image version to the branch that's active
 COMPOSE_TAG ?= $(GIT_BRANCH)
@@ -23,7 +19,7 @@ COMPOSE_HOST ?= $(shell hostname)
 
 VENV_BASE ?= /venv
 SCL_PREFIX ?=
-CELERY_SCHEDULE_FILE ?= /celerybeat-schedule
+CELERY_SCHEDULE_FILE ?= /var/lib/awx/beat.db
 
 DEV_DOCKER_TAG_BASE ?= gcr.io/ansible-tower-engineering
 # Python packages to install only from source (not from binary wheels)
@@ -46,20 +42,9 @@ DATE := $(shell date -u +%Y%m%d%H%M)
 NAME ?= awx
 GIT_REMOTE_URL = $(shell git config --get remote.origin.url)
 
-ifeq ($(OFFICIAL),yes)
-    VERSION_TARGET ?= $(RELEASE_VERSION)
-else
-    VERSION_TARGET ?= $(VERSION3DOT)
-endif
-
 # TAR build parameters
-ifeq ($(OFFICIAL),yes)
-    SDIST_TAR_NAME=$(NAME)-$(RELEASE_VERSION)
-    WHEEL_NAME=$(NAME)-$(RELEASE_VERSION)
-else
-    SDIST_TAR_NAME=$(NAME)-$(VERSION3DOT)
-    WHEEL_NAME=$(NAME)-$(VERSION3DOT)
-endif
+SDIST_TAR_NAME=$(NAME)-$(VERSION)
+WHEEL_NAME=$(NAME)-$(VERSION)
 
 SDIST_COMMAND ?= sdist
 WHEEL_COMMAND ?= bdist_wheel
@@ -72,8 +57,8 @@ UI_RELEASE_FLAG_FILE = awx/ui/.release_built
 
 I18N_FLAG_FILE = .i18n_built
 
-.PHONY: clean clean-tmp clean-venv requirements requirements_dev \
-	develop refresh adduser migrate dbchange dbshell runserver celeryd \
+.PHONY: awx-link clean clean-tmp clean-venv requirements requirements_dev \
+	develop refresh adduser migrate dbchange dbshell runserver \
 	receiver test test_unit test_ansible test_coverage coverage_html \
 	dev_build release_build release_clean sdist \
 	ui-docker-machine ui-docker ui-release ui-devel \
@@ -83,7 +68,9 @@ I18N_FLAG_FILE = .i18n_built
 clean-ui:
 	rm -rf awx/ui/static/
 	rm -rf awx/ui/node_modules/
-	rm -rf awx/ui/coverage/
+	rm -rf awx/ui/test/unit/reports/
+	rm -rf awx/ui/test/spec/reports/
+	rm -rf awx/ui/test/e2e/reports/
 	rm -rf awx/ui/client/languages/
 	rm -f $(UI_DEPS_FLAG_FILE)
 	rm -f $(UI_RELEASE_FLAG_FILE)
@@ -97,6 +84,11 @@ clean-venv:
 clean-dist:
 	rm -rf dist
 
+clean-schema:
+	rm -rf swagger.json
+	rm -rf schema.json
+	rm -rf reference-schema.json
+
 # Remove temporary build files, compiled Python files.
 clean: clean-ui clean-dist
 	rm -rf awx/public
@@ -108,7 +100,6 @@ clean: clean-ui clean-dist
 	rm -rf requirements/vendor
 	rm -rf tmp
 	rm -rf $(I18N_FLAG_FILE)
-	rm -f VERSION
 	mkdir tmp
 	rm -rf build $(NAME)-$(VERSION) *.egg-info
 	find . -type f -regex ".*\.py[co]$$" -delete
@@ -178,11 +169,10 @@ requirements_awx: virtualenv_awx
 	else \
 	    cat requirements/requirements.txt requirements/requirements_git.txt | $(VENV_BASE)/awx/bin/pip install $(PIP_OPTIONS) --no-binary $(SRC_ONLY_PKGS) --ignore-installed -r /dev/stdin ; \
 	fi
-	$(VENV_BASE)/awx/bin/pip uninstall --yes -r requirements/requirements_tower_uninstall.txt
+	#$(VENV_BASE)/awx/bin/pip uninstall --yes -r requirements/requirements_tower_uninstall.txt
 
 requirements_awx_dev:
 	$(VENV_BASE)/awx/bin/pip install -r requirements/requirements_dev.txt
-	$(VENV_BASE)/awx/bin/pip uninstall --yes -r requirements/requirements_dev_uninstall.txt
 
 requirements: requirements_ansible requirements_awx
 
@@ -201,8 +191,11 @@ develop:
 	fi
 
 version_file:
-	mkdir -p /var/lib/awx/
-	python -c "import awx as awx; print awx.__version__" > /var/lib/awx/.awx_version
+	mkdir -p /var/lib/awx/; \
+	if [ "$(VENV_BASE)" ]; then \
+		. $(VENV_BASE)/awx/bin/activate; \
+	fi; \
+	python -c "import awx as awx; print awx.__version__" > /var/lib/awx/.awx_version; \
 
 # Do any one-time init tasks.
 comma := ,
@@ -211,13 +204,11 @@ init:
 		. $(VENV_BASE)/awx/bin/activate; \
 	fi; \
 	$(MANAGEMENT_COMMAND) provision_instance --hostname=$(COMPOSE_HOST); \
-	$(MANAGEMENT_COMMAND) register_queue --queuename=tower --hostnames=$(COMPOSE_HOST);\
+	$(MANAGEMENT_COMMAND) register_queue --queuename=tower --instance_percent=100;\
 	if [ "$(AWX_GROUP_QUEUES)" == "tower,thepentagon" ]; then \
 		$(MANAGEMENT_COMMAND) provision_instance --hostname=isolated; \
 		$(MANAGEMENT_COMMAND) register_queue --queuename='thepentagon' --hostnames=isolated --controller=tower; \
-		$(MANAGEMENT_COMMAND) generate_isolated_key | ssh -o "StrictHostKeyChecking no" root@isolated 'cat > /root/.ssh/authorized_keys'; \
-	elif [ "$(AWX_GROUP_QUEUES)" != "tower" ]; then \
-		$(MANAGEMENT_COMMAND) register_queue --queuename=$(firstword $(subst $(comma), ,$(AWX_GROUP_QUEUES))) --hostnames=$(COMPOSE_HOST); \
+		$(MANAGEMENT_COMMAND) generate_isolated_key > /awx_devel/awx/main/expect/authorized_keys; \
 	fi;
 
 # Refresh development environment after pulling new code.
@@ -232,7 +223,7 @@ migrate:
 	if [ "$(VENV_BASE)" ]; then \
 		. $(VENV_BASE)/awx/bin/activate; \
 	fi; \
-	$(MANAGEMENT_COMMAND) migrate --noinput --fake-initial
+	$(MANAGEMENT_COMMAND) migrate --noinput
 
 # Run after making changes to the models to create a new migration.
 dbchange:
@@ -246,7 +237,7 @@ server_noattach:
 	tmux new-session -d -s awx 'exec make uwsgi'
 	tmux rename-window 'AWX'
 	tmux select-window -t awx:0
-	tmux split-window -v 'exec make celeryd'
+	tmux split-window -v 'exec make dispatcher'
 	tmux new-window 'exec make daphne'
 	tmux select-window -t awx:1
 	tmux rename-window 'WebSockets'
@@ -271,18 +262,12 @@ supervisor:
 	supervisord --configuration /supervisor.conf --pidfile=/tmp/supervisor_pid
 
 # Alternate approach to tmux to run all development tasks specified in
-# Procfile.  https://youtu.be/OPMgaibszjk
+# Procfile.
 honcho:
 	@if [ "$(VENV_BASE)" ]; then \
 		. $(VENV_BASE)/awx/bin/activate; \
 	fi; \
 	honcho start -f tools/docker-compose/Procfile
-
-flower:
-	@if [ "$(VENV_BASE)" ]; then \
-		. $(VENV_BASE)/awx/bin/activate; \
-	fi; \
-	$(PYTHON) manage.py celery flower --address=0.0.0.0 --port=5555 --broker=amqp://guest:guest@$(RABBITMQ_HOST):5672//
 
 collectstatic:
 	@if [ "$(VENV_BASE)" ]; then \
@@ -294,7 +279,7 @@ uwsgi: collectstatic
 	@if [ "$(VENV_BASE)" ]; then \
 		. $(VENV_BASE)/awx/bin/activate; \
 	fi; \
-    uwsgi -b 32768 --socket 127.0.0.1:8050 --module=awx.wsgi:application --home=/venv/awx --chdir=/awx_devel/ --vacuum --processes=5 --harakiri=120 --master --no-orphans --py-autoreload 1 --max-requests=1000 --stats /tmp/stats.socket --master-fifo=/awxfifo --lazy-apps --logformat "%(addr) %(method) %(uri) - %(proto) %(status)"
+    uwsgi -b 32768 --socket 127.0.0.1:8050 --module=awx.wsgi:application --home=/venv/awx --chdir=/awx_devel/ --vacuum --processes=5 --harakiri=120 --master --no-orphans --py-autoreload 1 --max-requests=1000 --stats /tmp/stats.socket --lazy-apps --logformat "%(addr) %(method) %(uri) - %(proto) %(status)" --hook-accepting1-once="exec:awx-manage run_dispatcher --reload"
 
 daphne:
 	@if [ "$(VENV_BASE)" ]; then \
@@ -315,13 +300,13 @@ runserver:
 	fi; \
 	$(PYTHON) manage.py runserver
 
-# Run to start the background celery worker for development.
-celeryd:
+# Run to start the background task dispatcher for development.
+dispatcher:
 	@if [ "$(VENV_BASE)" ]; then \
 		. $(VENV_BASE)/awx/bin/activate; \
 	fi; \
-	$(PYTHON) manage.py celeryd -l DEBUG -B -Ofair --autoreload --autoscale=100,4 --schedule=$(CELERY_SCHEDULE_FILE) -Q tower_scheduler,tower_broadcast_all,$(COMPOSE_HOST),$(AWX_GROUP_QUEUES) -n celery@$(COMPOSE_HOST)
-	#$(PYTHON) manage.py celery multi show projects jobs default -l DEBUG -Q:projects projects -Q:jobs jobs -Q:default default -c:projects 1 -c:jobs 3 -c:default 3 -Ofair -B --schedule=$(CELERY_SCHEDULE_FILE)
+	$(PYTHON) manage.py run_dispatcher
+
 
 # Run to start the zeromq callback receiver
 receiver:
@@ -330,17 +315,14 @@ receiver:
 	fi; \
 	$(PYTHON) manage.py run_callback_receiver
 
-socketservice:
-	@if [ "$(VENV_BASE)" ]; then \
-		. $(VENV_BASE)/awx/bin/activate; \
-	fi; \
-	$(PYTHON) manage.py run_socketio_service
-
 nginx:
 	nginx -g "daemon off;"
 
-rdb:
-	$(PYTHON) tools/rdb.py
+jupyter:
+	@if [ "$(VENV_BASE)" ]; then \
+		. $(VENV_BASE)/awx/bin/activate; \
+	fi; \
+	$(MANAGEMENT_COMMAND) shell_plus --notebook
 
 reports:
 	mkdir -p $@
@@ -360,15 +342,33 @@ pyflakes: reports
 pylint: reports
 	@(set -o pipefail && $@ | reports/$@.report)
 
-check: flake8 pep8 # pyflakes pylint
+genschema: reports
+	$(MAKE) swagger PYTEST_ARGS="--genschema"
 
-TEST_DIRS ?= awx/main/tests awx/conf/tests awx/sso/tests
-# Run all API unit tests.
-test: test_ansible
+swagger: reports
 	@if [ "$(VENV_BASE)" ]; then \
 		. $(VENV_BASE)/awx/bin/activate; \
 	fi; \
-	py.test $(TEST_DIRS)
+	(set -o pipefail && py.test $(PYTEST_ARGS) awx/conf/tests/functional awx/main/tests/functional/api awx/main/tests/docs --release=$(VERSION_TARGET) | tee reports/$@.report)
+
+check: flake8 pep8 # pyflakes pylint
+
+awx-link:
+	cp -R /tmp/awx.egg-info /awx_devel/ || true
+	sed -i "s/placeholder/$(shell git describe --long | sed 's/\./\\./g')/" /awx_devel/awx.egg-info/PKG-INFO
+	cp -f /tmp/awx.egg-link /venv/awx/lib/python2.7/site-packages/awx.egg-link
+
+TEST_DIRS ?= awx/main/tests/unit awx/main/tests/functional awx/conf/tests awx/sso/tests
+
+# Run all API unit tests.
+test:
+	@if [ "$(VENV_BASE)" ]; then \
+		. $(VENV_BASE)/awx/bin/activate; \
+	fi; \
+	PYTHONDONTWRITEBYTECODE=1 py.test -p no:cacheprovider -n auto $(TEST_DIRS)
+	awx-manage check_migrations --dry-run --check  -n 'vNNN_missing_migration_file'
+
+test_combined: test_ansible test
 
 test_unit:
 	@if [ "$(VENV_BASE)" ]; then \
@@ -467,7 +467,7 @@ $(I18N_FLAG_FILE): $(UI_DEPS_FLAG_FILE)
 ui-deps: $(UI_DEPS_FLAG_FILE)
 
 $(UI_DEPS_FLAG_FILE):
-	$(NPM_BIN) --unsafe-perm --prefix awx/ui install awx/ui
+	$(NPM_BIN) --unsafe-perm --prefix awx/ui install --no-save awx/ui
 	touch $(UI_DEPS_FLAG_FILE)
 
 ui-docker-machine: $(UI_DEPS_FLAG_FILE)
@@ -495,12 +495,14 @@ ui: clean-ui ui-devel
 
 ui-test-ci: $(UI_DEPS_FLAG_FILE)
 	$(NPM_BIN) --prefix awx/ui run test:ci
+	$(NPM_BIN) --prefix awx/ui run unit
 
 testjs_ci:
 	echo "Update UI unittests later" #ui-test-ci
 
 jshint: $(UI_DEPS_FLAG_FILE)
 	$(NPM_BIN) run --prefix awx/ui jshint
+	$(NPM_BIN) run --prefix awx/ui lint
 
 # END UI TASKS
 # --------------------------------------
@@ -545,22 +547,38 @@ docker-isolated:
 	TAG=$(COMPOSE_TAG) DEV_DOCKER_TAG_BASE=$(DEV_DOCKER_TAG_BASE) docker-compose -f tools/docker-compose.yml -f tools/docker-isolated-override.yml create
 	docker start tools_awx_1
 	docker start tools_isolated_1
-	if [ "`docker exec -i -t tools_isolated_1 cat /root/.ssh/authorized_keys`" == "`docker exec -t tools_awx_1 cat /root/.ssh/id_rsa.pub`" ]; then \
-		echo "SSH keys already copied to isolated instance"; \
-	else \
-		docker exec "tools_isolated_1" bash -c "mkdir -p /root/.ssh && rm -f /root/.ssh/authorized_keys && echo $$(docker exec -t tools_awx_1 cat /root/.ssh/id_rsa.pub) >> /root/.ssh/authorized_keys"; \
-	fi
-	TAG=$(COMPOSE_TAG) DEV_DOCKER_TAG_BASE=$(DEV_DOCKER_TAG_BASE) docker-compose -f tools/docker-compose.yml -f tools/docker-isolated-override.yml up
+	echo "__version__ = '`git describe --long | cut -d - -f 1-1`'" | docker exec -i tools_isolated_1 /bin/bash -c "cat > /venv/awx/lib/python2.7/site-packages/awx.py"
+	CURRENT_UID=$(shell id -u) TAG=$(COMPOSE_TAG) DEV_DOCKER_TAG_BASE=$(DEV_DOCKER_TAG_BASE) docker-compose -f tools/docker-compose.yml -f tools/docker-isolated-override.yml up
 
 # Docker Compose Development environment
 docker-compose: docker-auth
-	TAG=$(COMPOSE_TAG) DEV_DOCKER_TAG_BASE=$(DEV_DOCKER_TAG_BASE) docker-compose -f tools/docker-compose.yml up --no-recreate awx
+	CURRENT_UID=$(shell id -u) TAG=$(COMPOSE_TAG) DEV_DOCKER_TAG_BASE=$(DEV_DOCKER_TAG_BASE) docker-compose -f tools/docker-compose.yml up --no-recreate awx
 
 docker-compose-cluster: docker-auth
-	TAG=$(COMPOSE_TAG) DEV_DOCKER_TAG_BASE=$(DEV_DOCKER_TAG_BASE) docker-compose -f tools/docker-compose-cluster.yml up
+	CURRENT_UID=$(shell id -u) TAG=$(COMPOSE_TAG) DEV_DOCKER_TAG_BASE=$(DEV_DOCKER_TAG_BASE) docker-compose -f tools/docker-compose-cluster.yml up
 
 docker-compose-test: docker-auth
-	cd tools && TAG=$(COMPOSE_TAG) DEV_DOCKER_TAG_BASE=$(DEV_DOCKER_TAG_BASE) docker-compose run --rm --service-ports awx /bin/bash
+	cd tools && CURRENT_UID=$(shell id -u) TAG=$(COMPOSE_TAG) DEV_DOCKER_TAG_BASE=$(DEV_DOCKER_TAG_BASE) docker-compose run --rm --service-ports awx /bin/bash
+
+docker-compose-runtest:
+	cd tools && CURRENT_UID=$(shell id -u) TAG=$(COMPOSE_TAG) DEV_DOCKER_TAG_BASE=$(DEV_DOCKER_TAG_BASE) docker-compose run --rm --service-ports awx /start_tests.sh
+
+docker-compose-build-swagger:
+	cd tools && CURRENT_UID=$(shell id -u) TAG=$(COMPOSE_TAG) DEV_DOCKER_TAG_BASE=$(DEV_DOCKER_TAG_BASE) docker-compose run --rm --service-ports awx /start_tests.sh swagger
+
+docker-compose-genschema:
+	cd tools && CURRENT_UID=$(shell id -u) TAG=$(COMPOSE_TAG) DEV_DOCKER_TAG_BASE=$(DEV_DOCKER_TAG_BASE) docker-compose run --rm --service-ports awx /start_tests.sh genschema
+	mv swagger.json schema.json
+
+docker-compose-detect-schema-change:
+	$(MAKE) docker-compose-genschema
+	curl https://s3.amazonaws.com/awx-public-ci-files/schema.json -o reference-schema.json
+	# Ignore differences in whitespace with -b
+	diff -u -b schema.json reference-schema.json
+
+docker-compose-clean:
+	cd tools && CURRENT_UID=$(shell id -u) TAG=$(COMPOSE_TAG) DEV_DOCKER_TAG_BASE=$(DEV_DOCKER_TAG_BASE) docker-compose run --rm -w /awx_devel --service-ports awx make clean
+	cd tools && TAG=$(COMPOSE_TAG) DEV_DOCKER_TAG_BASE=$(DEV_DOCKER_TAG_BASE) docker-compose rm -sf
 
 docker-compose-build: awx-devel-build
 
@@ -586,10 +604,13 @@ docker-refresh: docker-clean docker-compose
 
 # Docker Development Environment with Elastic Stack Connected
 docker-compose-elk: docker-auth
-	TAG=$(COMPOSE_TAG) DEV_DOCKER_TAG_BASE=$(DEV_DOCKER_TAG_BASE) docker-compose -f tools/docker-compose.yml -f tools/elastic/docker-compose.logstash-link.yml -f tools/elastic/docker-compose.elastic-override.yml up --no-recreate
+	CURRENT_UID=$(shell id -u) TAG=$(COMPOSE_TAG) DEV_DOCKER_TAG_BASE=$(DEV_DOCKER_TAG_BASE) docker-compose -f tools/docker-compose.yml -f tools/elastic/docker-compose.logstash-link.yml -f tools/elastic/docker-compose.elastic-override.yml up --no-recreate
 
 docker-compose-cluster-elk: docker-auth
 	TAG=$(COMPOSE_TAG) DEV_DOCKER_TAG_BASE=$(DEV_DOCKER_TAG_BASE) docker-compose -f tools/docker-compose-cluster.yml -f tools/elastic/docker-compose.logstash-link-cluster.yml -f tools/elastic/docker-compose.elastic-override.yml up --no-recreate
+
+minishift-dev:
+	ansible-playbook -i localhost, -e devtree_directory=$(CURDIR) tools/clusterdevel/start_minishift_dev.yml
 
 clean-elk:
 	docker stop tools_kibana_1
@@ -600,8 +621,7 @@ clean-elk:
 	docker rm tools_kibana_1
 
 psql-container:
-	docker run -it --net tools_default --rm postgres:9.4.1 sh -c 'exec psql -h "postgres" -p "5432" -U postgres'
+	docker run -it --net tools_default --rm postgres:9.6 sh -c 'exec psql -h "postgres" -p "5432" -U postgres'
 
 VERSION:
-	@echo $(VERSION_TARGET) > $@
-	@echo "awx: $(VERSION_TARGET)"
+	@echo "awx: $(VERSION)"

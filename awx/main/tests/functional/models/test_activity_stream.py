@@ -15,19 +15,15 @@ from awx.main.models import (
 )
 
 # other AWX
-from awx.main.utils import model_to_dict
-from awx.api.serializers import InventorySourceSerializer
+from awx.main.utils import model_to_dict, model_instance_diff
+from awx.main.utils.common import get_allowed_fields
+from awx.main.signals import model_serializer_mapping
 
 # Django
 from django.contrib.auth.models import AnonymousUser
 
 # Django-CRUM
 from crum import impersonate
-
-
-model_serializer_mapping = {
-    InventorySource: InventorySourceSerializer
-}
 
 
 class TestImplicitRolesOmitted:
@@ -54,12 +50,11 @@ class TestImplicitRolesOmitted:
         assert qs[1].operation == 'delete'
 
     @pytest.mark.django_db
-    def test_activity_stream_create_JT(self, project, inventory, credential):
+    def test_activity_stream_create_JT(self, project, inventory):
         JobTemplate.objects.create(
             name='test-jt',
             project=project,
             inventory=inventory,
-            credential=credential
         )
         qs = ActivityStream.objects.filter(job_template__isnull=False)
         assert qs.count() == 1
@@ -182,3 +177,76 @@ def test_annon_user_action():
         inv = Inventory.objects.create(name='ainventory')
     entry = inv.activitystream_set.filter(operation='create').first()
     assert not entry.actor
+
+
+@pytest.mark.django_db
+def test_activity_stream_deleted_actor(alice, bob):
+    alice.first_name = 'Alice'
+    alice.last_name = 'Doe'
+    alice.save()
+    with impersonate(alice):
+        o = Organization.objects.create(name='test organization')
+    entry = o.activitystream_set.get(operation='create')
+    assert entry.actor == alice
+
+    alice.delete()
+    entry = o.activitystream_set.get(operation='create')
+    assert entry.actor is None
+    deleted = entry.deleted_actor
+    assert deleted['username'] == 'alice'
+    assert deleted['first_name'] == 'Alice'
+    assert deleted['last_name'] == 'Doe'
+
+    entry.actor = bob
+    entry.save(update_fields=['actor'])
+    deleted = entry.deleted_actor
+
+    entry = ActivityStream.objects.get(id=entry.pk)
+    assert entry.deleted_actor['username'] == 'bob'
+
+
+@pytest.mark.django_db
+def test_modified_not_allowed_field(somecloud_type):
+    '''
+    If this test fails, that means that read-only fields are showing
+    up in the activity stream serialization of an instance.
+
+    That _probably_ means that you just connected a new model to the
+    activity_stream_registrar, but did not add its serializer to
+    the model->serializer mapping.
+    '''
+    from awx.main.registrar import activity_stream_registrar
+
+    for Model in activity_stream_registrar.models:
+        assert 'modified' not in get_allowed_fields(Model(), model_serializer_mapping), Model
+
+
+@pytest.mark.django_db
+def test_survey_spec_create_entry(job_template, survey_spec_factory):
+    start_count = job_template.activitystream_set.count()
+    job_template.survey_spec = survey_spec_factory('foo')
+    job_template.save()
+    assert job_template.activitystream_set.count() == start_count + 1
+
+
+@pytest.mark.django_db
+def test_survey_create_diff(job_template, survey_spec_factory):
+    old = JobTemplate.objects.get(pk=job_template.pk)
+    job_template.survey_spec = survey_spec_factory('foo')
+    before, after = model_instance_diff(old, job_template, model_serializer_mapping)['survey_spec']
+    assert before == '{}'
+    assert json.loads(after) == survey_spec_factory('foo')
+
+
+@pytest.mark.django_db
+def test_saved_passwords_hidden_activity(workflow_job_template, job_template_with_survey_passwords):
+    node_with_passwords = workflow_job_template.workflow_nodes.create(
+        unified_job_template=job_template_with_survey_passwords,
+        extra_data={'bbbb': '$encrypted$fooooo'},
+        survey_passwords={'bbbb': '$encrypted$'}
+    )
+    node_with_passwords.delete()
+    entry = ActivityStream.objects.order_by('timestamp').last()
+    changes = json.loads(entry.changes)
+    assert 'survey_passwords' not in changes
+    assert json.loads(changes['extra_data'])['bbbb'] == '$encrypted$'

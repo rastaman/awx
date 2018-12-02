@@ -6,10 +6,12 @@
 
 export default ['$scope', 'NestedHostsListDefinition', '$rootScope', 'GetBasePath',
     'rbacUiControlService', 'Dataset', '$state', '$filter', 'Prompt', 'Wait',
-    'HostsService', 'SetStatus', 'canAdd', 'GroupsService', 'ProcessErrors', 'groupData', 'inventoryData',
+    'HostsService', 'SetStatus', 'canAdd', 'GroupsService', 'ProcessErrors', 'groupData', 'inventoryData', 'InventoryHostsStrings',
+    '$transitions',
     function($scope, NestedHostsListDefinition, $rootScope, GetBasePath,
     rbacUiControlService, Dataset, $state, $filter, Prompt, Wait,
-    HostsService, SetStatus, canAdd, GroupsService, ProcessErrors, groupData, inventoryData) {
+    HostsService, SetStatus, canAdd, GroupsService, ProcessErrors, groupData, inventoryData, InventoryHostsStrings,
+    $transitions) {
 
     let list = NestedHostsListDefinition;
 
@@ -19,6 +21,7 @@ export default ['$scope', 'NestedHostsListDefinition', '$rootScope', 'GetBasePat
         $scope.canAdd = canAdd;
         $scope.enableSmartInventoryButton = false;
         $scope.disassociateFrom = groupData;
+        $scope.smartInventoryButtonTooltip = InventoryHostsStrings.get('smartinventorybutton.DISABLED_INSTRUCTIONS');
 
         // Search init
         $scope.list = list;
@@ -46,18 +49,20 @@ export default ['$scope', 'NestedHostsListDefinition', '$rootScope', 'GetBasePat
             setJobStatus();
         });
 
-        $rootScope.$on('$stateChangeSuccess', function(event, toState, toParams) {
-            if(toParams && toParams.host_search) {
+        $transitions.onSuccess({}, function(trans) {
+            if(trans.params('to') && trans.params('to').host_search) {
                 let hasMoreThanDefaultKeys = false;
-                angular.forEach(toParams.host_search, function(value, key) {
-                    if(key !== 'order_by' && key !== 'page_size') {
+                angular.forEach(trans.params('to').host_search, function(value, key) {
+                    if(key !== 'order_by' && key !== 'page_size' && key !== 'page') {
                         hasMoreThanDefaultKeys = true;
                     }
                 });
                 $scope.enableSmartInventoryButton = hasMoreThanDefaultKeys ? true : false;
+                $scope.smartInventoryButtonTooltip = hasMoreThanDefaultKeys ? InventoryHostsStrings.get('smartinventorybutton.ENABLED_INSTRUCTIONS') : InventoryHostsStrings.get('smartinventorybutton.DISABLED_INSTRUCTIONS');
             }
             else {
                 $scope.enableSmartInventoryButton = false;
+                $scope.smartInventoryButtonTooltip = InventoryHostsStrings.get('smartinventorybutton.DISABLED_INSTRUCTIONS');
             }
         });
 
@@ -75,8 +80,6 @@ export default ['$scope', 'NestedHostsListDefinition', '$rootScope', 'GetBasePat
                     $scope.hostsSelected = null;
                 }
             }
-
-            $scope.systemTrackingDisabled = ($scope.hostsSelected && $scope.hostsSelected.length > 2) ? true : false;
         });
 
     }
@@ -152,15 +155,6 @@ export default ['$scope', 'NestedHostsListDefinition', '$rootScope', 'GetBasePat
 
         HostsService.put(host).then(function(){
             $state.go($state.current, null, {reload: true});
-        });
-    };
-
-    $scope.systemTracking = function(){
-        var hostIds = _.map($scope.hostsSelected, (host) => host.id);
-        $state.go('systemTracking', {
-            inventoryId: $state.params.inventory_id,
-            hosts: $scope.hostsSelected,
-            hostIds: hostIds
         });
     };
 

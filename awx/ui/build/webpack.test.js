@@ -1,13 +1,12 @@
-const path = require('path');
-
 const _ = require('lodash');
 const webpack = require('webpack');
 
 const STATIC_URL = '/static/';
 
-let development = require('./webpack.development');
+const development = require('./webpack.base');
 
-let test = {
+const test = {
+    devtool: 'cheap-source-map',
     plugins: [
         new webpack.DefinePlugin({
             $basePath: STATIC_URL
@@ -15,7 +14,7 @@ let test = {
     ]
 };
 
-test.plugins = development.plugins.concat(test.plugins)
+test.plugins = development.plugins.concat(test.plugins);
 
 module.exports = _.merge(development, test);
 

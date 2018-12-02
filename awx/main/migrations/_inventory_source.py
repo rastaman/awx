@@ -1,6 +1,7 @@
 import logging
 
 from django.db.models import Q
+import six
 
 logger = logging.getLogger('awx.main.migrations')
 
@@ -38,8 +39,10 @@ def rename_inventory_sources(apps, schema_editor):
                                                                   Q(deprecated_group__inventory__organization=org)).distinct().all()):
 
             inventory = invsrc.deprecated_group.inventory if invsrc.deprecated_group else invsrc.inventory
-            name = '{0} - {1} - {2}'.format(invsrc.name, inventory.name, i)
-            logger.debug("Renaming InventorySource({0}) {1} -> {2}".format(invsrc.pk, invsrc.name, name))
+            name = six.text_type('{0} - {1} - {2}').format(invsrc.name, inventory.name, i)
+            logger.debug(six.text_type("Renaming InventorySource({0}) {1} -> {2}").format(
+                invsrc.pk, invsrc.name, name
+            ))
             invsrc.name = name
             invsrc.save()
 
@@ -51,3 +54,12 @@ def remove_inventory_source_with_no_inventory_link(apps, schema_editor):
     InventorySource = apps.get_model('main', 'InventorySource')
     logger.debug("Removing all InventorySource that have no link to an Inventory from database.")
     InventorySource.objects.filter(Q(inventory__organization=None) & Q(deprecated_group__inventory=None)).delete()
+
+
+def remove_azure_inventory_sources(apps, schema_editor):
+    '''Azure inventory sources are not supported since 3.2, remove them.
+    '''
+    InventorySource = apps.get_model('main', 'InventorySource')
+    logger.debug("Removing all Azure InventorySource from database.")
+    InventorySource.objects.filter(source='azure').delete()
+

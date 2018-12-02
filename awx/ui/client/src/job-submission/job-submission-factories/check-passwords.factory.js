@@ -9,10 +9,10 @@ export default
             if (!Empty(credential)) {
                 Rest.setUrl(GetBasePath('credentials')+credential);
                 Rest.get()
-                .success(function (data) {
+                .then(({data}) => {
                     credentialTypesLookup()
                         .then(kinds => {
-                            if(data.credential_type === kinds.Machine && data.inputs){
+                            if(data.credential_type === kinds.ssh && data.inputs){
                                 if(data.inputs.password === "ASK" ){
                                     passwords.push("ssh_password");
                                 }
@@ -30,7 +30,7 @@ export default
                         });
 
                 })
-                .error(function (data, status) {
+                .catch(({data, status}) => {
                     ProcessErrors(scope, data, status, null, { hdr: 'Error!',
                     msg: 'Failed to get job template details. GET returned status: ' + status });
                 });

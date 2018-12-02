@@ -79,7 +79,7 @@
  * | default | Default value to place in the field when the form is in 'add' mode. |
  * | defaultText | Default value to put into a select input. |
  * | falseValue | For radio buttons and checkboxes. Value to set the model to when the checkbox or radio button is not selected. |
- * | genMD5 | true or false. If true, places the field in an input group with a button that when clicked replaces the field contents with an MD5 has key. Used with host_config_key on the job templates detail page. |
+ * | genHash | true or false. If true, places the field in an input group with a button that when clicked replaces the field contents with a hash as key. Used with host_config_key on the job templates detail page. |
  * | integer | Adds the integer directive to validate that the value entered is of type integer. Add min and max to supply lower and upper range bounds to the entered value. |
  * | label | Text to use as &lt;label&gt; element for the field |
  * | ngChange | Adds ng-change directive. Set to the JS expression to be evaluated by ng-change. |
@@ -142,10 +142,10 @@ angular.module('FormGenerator', [GeneratorHelpers.name, 'Utilities', listGenerat
 .factory('GenerateForm', ['$rootScope', '$compile', 'generateList',
     'Attr', 'Icon', 'Column',
     'NavigationLink', 'HelpCollapse', 'Empty', 'SelectIcon',
-    'ActionButton', '$log', 'i18n',
+    'ActionButton', 'MessageBar', '$log', 'i18n',
     function ($rootScope, $compile, GenerateList,
         Attr, Icon, Column, NavigationLink, HelpCollapse,
-        Empty, SelectIcon, ActionButton, $log, i18n) {
+        Empty, SelectIcon, ActionButton, MessageBar, $log, i18n) {
         return {
 
             setForm: function (form) { this.form = form; },
@@ -166,14 +166,17 @@ angular.module('FormGenerator', [GeneratorHelpers.name, 'Utilities', listGenerat
             // Also wraps mess of generated HTML in a .Panel
             wrapPanel(html, ignorePanel){
                 if(ignorePanel) {
-                    return `<div>
+                    return `
+                    <div>
                     ${html}
                     <div ui-view="related"></div>
                     <div ui-view="modal"></div>
                     </div>`;
                 }
                 else {
-                    return `<div class="Panel">
+                    return `
+                    ${MessageBar(this.form)}
+                    <div class="Panel">
                     ${html}
                     <div ui-view="related"></div>
                     <div ui-view="modal"></div>
@@ -535,11 +538,13 @@ angular.module('FormGenerator', [GeneratorHelpers.name, 'Utilities', listGenerat
                     html += (field.flag) ? field.flag : 'enabled';
                     html += "' ";
                     html += (field.ngDisabled) ? `ng-disabled="${field.ngDisabled}" ` : "";
-                    html += " class='ScheduleToggle-switch is-on' ng-click='" + field.ngClick + "'>" + i18n._("ON") + "</button><button ng-show='!" + form.iterator + "." ;
+                    html += " class='ScheduleToggle-switch is-on' ng-click='" + field.ngClick + "' translate>" + i18n._("ON") + "</button><button ng-show='!" + form.iterator + "." ;
                     html += (field.flag) ? field.flag : "enabled";
                     html += "' ";
                     html += (field.ngDisabled) ? `ng-disabled="${field.ngDisabled}" ` : "";
-                    html += " class='ScheduleToggle-switch' ng-click='" + field.ngClick + "'>" + i18n._("OFF") + "</button></div></div>";
+                    html += " class='ScheduleToggle-switch' ng-click='" + field.ngClick + "' translate>" + i18n._("OFF") + "</button></div></div>";
+                } else if (field.type === 'html') {
+                    html += field.html;
                 }
                 return html;
             },
@@ -594,6 +599,7 @@ angular.module('FormGenerator', [GeneratorHelpers.name, 'Utilities', listGenerat
                         label = (includeLabel !== undefined && includeLabel === false) ? false : true;
 
                     if (label) {
+                        html += "<span class=\"Form-checkboxRow\">";
                         html += "<label class=\"";
                         html += (field.inline === undefined || field.inline === true) ? "checkbox-inline" : "";
                         html += (field.labelClass) ? " " + field.labelClass : "";
@@ -623,6 +629,7 @@ angular.module('FormGenerator', [GeneratorHelpers.name, 'Utilities', listGenerat
                         html += field.label + " ";
                         html += (field.awPopOver) ? Attr(field, 'awPopOver', fld) : "";
                         html += "</label>\n";
+                        html += "</span>";
                     }
 
                     return html;
@@ -706,9 +713,9 @@ angular.module('FormGenerator', [GeneratorHelpers.name, 'Utilities', listGenerat
                     html += (field.ngDisabled) ? ', "ScheduleToggle--disabled": ' + field.ngDisabled : '';
                     html += "\}' aw-tool-tip='" + field.awToolTip + "' data-placement='" + field.dataPlacement + "' data-tip-watch='" + field.dataTipWatch + "'><div ng-show='" + form.iterator + "." ;
                     html += (field.flag) ? field.flag : 'enabled';
-                    html += "' class='ScheduleToggle-switch is-on' ng-click='" + field.ngClick + "'>ON</div><div ng-show='!" + form.iterator + "." ;
+                    html += "' class='ScheduleToggle-switch is-on' ng-click='" + field.ngClick + "' translate>ON</div><div ng-show='!" + form.iterator + "." ;
                     html += (field.flag) ? field.flag : "enabled";
-                    html += "' class='ScheduleToggle-switch' ng-click='" + field.ngClick + "'>OFF</div></div></td>";
+                    html += "' class='ScheduleToggle-switch' ng-click='" + field.ngClick + "' translate>OFF</div></div></td>";
                 }
 
                 if (field.type === 'alertblock') {
@@ -733,7 +740,7 @@ angular.module('FormGenerator', [GeneratorHelpers.name, 'Utilities', listGenerat
 
                     if((field.excludeMode === undefined || field.excludeMode !== options.mode) && field.type !== 'alertblock' && field.type !== 'workflow-chart') {
 
-                    html += "<div class='form-group Form-formGroup ";
+                    html += `<div id='${form.name}_${fld}_group' class='form-group Form-formGroup `;
                     html += (field.disabled) ? `Form-formGroup--disabled ` : ``;
                     html += (field.type === "checkbox") ? "Form-formGroup--checkbox" : "";
                     html += (field['class']) ? (field['class']) : "";
@@ -768,9 +775,9 @@ angular.module('FormGenerator', [GeneratorHelpers.name, 'Utilities', listGenerat
                         html += (field.ngShow) ? "ng-show=\"" + field.ngShow + "\" " : "";
                         html += `data-placement="top">`;
                         html += `<button ng-show="${field.toggleSource}" class="ScheduleToggle-switch is-on" ng-click="toggleForm('${field.toggleSource}')"
-                                ng-disabled="${field.ngDisabled}">ON</button>
+                                ng-disabled="${field.ngDisabled}" translate>${i18n._("ON")}</button>
                             <button ng-show="!${field.toggleSource}" class="ScheduleToggle-switch" ng-click="toggleForm('${field.toggleSource}')"
-                                ng-disabled="${field.ngDisabled}">OFF</button>
+                                ng-disabled="${field.ngDisabled}" translate>${i18n._("OFF")}</button>
                         </div>`;
                     }
 
@@ -795,7 +802,7 @@ angular.module('FormGenerator', [GeneratorHelpers.name, 'Utilities', listGenerat
                         html += (horizontal) ? "class=\"" + getFieldWidth() + "\"" : "";
                         html += ">\n";
 
-                        html += (field.clear || field.genMD5) ? "<div class=\"input-group Form-mixedInputGroup\">\n" : "";
+                        html += (field.clear || field.genHash) ? "<div class=\"input-group Form-mixedInputGroup\">\n" : "";
 
                         if (field.control === null || field.control === undefined || field.control) {
                             html += "<input ";
@@ -835,8 +842,8 @@ angular.module('FormGenerator', [GeneratorHelpers.name, 'Utilities', listGenerat
                             html += "</span>\n</div>\n";
                         }
 
-                        if (field.genMD5) {
-                            html += "<span class=\"input-group-btn\"><button type=\"button\" class=\"btn Form-lookupButton\" ng-click=\"genMD5('" + fld + "')\" " +
+                        if (field.genHash) {
+                            html += "<span class=\"input-group-btn\"><button type=\"button\" class=\"btn Form-lookupButton\" ng-click=\"genHash('" + fld + "')\" " +
                                 "aw-tool-tip=\"Generate " + field.label + "\" data-placement=\"top\" id=\"" + this.form.name + "_" + fld + "_gen_btn\">" +
                                 "<i class=\"fa fa-magic\"></i></button></span>\n</div>\n";
                         }
@@ -1034,6 +1041,15 @@ angular.module('FormGenerator', [GeneratorHelpers.name, 'Utilities', listGenerat
                             };
                         }
 
+                        if (field.onError) {
+                            labelOptions.onError = {
+                                id: `${this.form.name}_${fld}_error_text`,
+                                ngShow: field.onError.ngShow,
+                                ngModel: field.onError.variable,
+                                text: field.onError.text
+                            };
+                        }
+
                         html += label(labelOptions);
 
                         html += "<div ";
@@ -1084,7 +1100,11 @@ angular.module('FormGenerator', [GeneratorHelpers.name, 'Utilities', listGenerat
                                 }
                                 html += "</div>\n";
                         }
+                        if (field.label === "Labels") {
+                            html += `<div class="error" id="${field.onError.id}" ng-show="${field.onError.ngShow}">${field.onError.text}</div>`;
+                        }
                         html += "<div class=\"error api-error\" id=\"" + this.form.name + "-" + fld + "-api-error\" ng-bind=\"" + fld + "_api_error\"></div>\n";
+                        
 
                         // Add help panel(s)
                         html += (field.helpCollapse) ? this.buildHelpCollapse(field.helpCollapse) : '';
@@ -1719,8 +1739,8 @@ angular.module('FormGenerator', [GeneratorHelpers.name, 'Utilities', listGenerat
                                     button.label = i18n._('View Survey');
                                     button['class'] = 'Form-surveyButton';
                                 }
-                                if (btn === 'workflow_editor') {
-                                    button.label = i18n._('Workflow Editor');
+                                if (btn === 'workflow_visualizer') {
+                                    button.label = i18n._('Workflow Visualizer');
                                     button['class'] = 'Form-primaryButton';
                                 }
 
@@ -1875,7 +1895,7 @@ angular.module('FormGenerator', [GeneratorHelpers.name, 'Utilities', listGenerat
                     <div
                         class="row"
                         ng-show="${itm}.length === 0 && !(searchTags | isEmpty)">
-                        <div class="col-lg-12 List-searchNoResults">`;
+                        <div class="col-lg-12 List-searchNoResults" translate>`;
                 html += i18n._('No records matched your search.');
                 html += `</div>
                     </div>
@@ -1950,29 +1970,31 @@ angular.module('FormGenerator', [GeneratorHelpers.name, 'Utilities', listGenerat
                 if (collection.fieldActions) {
                     html += "<td class=\"List-actionsContainer\"><div class=\"List-tableCell List-actionButtonCell actions\">";
                     for (act in collection.fieldActions) {
-                        fAction = collection.fieldActions[act];
-                        html += "<button id=\"" + ((fAction.id) ? fAction.id : act + "-action") + "\" ";
-                        html += (fAction.awToolTip) ? 'aw-tool-tip="' + fAction.awToolTip + '"' : '';
-                        html += (fAction.dataPlacement) ? 'data-placement="' + fAction.dataPlacement + '"' : '';
-                        html += (fAction.href) ? "href=\"" + fAction.href + "\" " : "";
-                        html += (fAction.ngClick) ? this.attr(fAction, 'ngClick') : "";
-                        html += (fAction.ngHref) ? this.attr(fAction, 'ngHref') : "";
-                        html += (fAction.ngShow) ? this.attr(fAction, 'ngShow') : "";
-                        html += " class=\"List-actionButton ";
-                        html += (act === 'delete') ? "List-actionButton--delete" : "";
-                        html += "\"";
+                        if (act !== 'columnClass') {
+                            fAction = collection.fieldActions[act];
+                            html += "<button id=\"" + ((fAction.id) ? fAction.id : act + "-action") + "\" ";
+                            html += (fAction.awToolTip) ? 'aw-tool-tip="' + fAction.awToolTip + '"' : '';
+                            html += (fAction.dataPlacement) ? 'data-placement="' + fAction.dataPlacement + '"' : '';
+                            html += (fAction.href) ? "href=\"" + fAction.href + "\" " : "";
+                            html += (fAction.ngClick) ? this.attr(fAction, 'ngClick') : "";
+                            html += (fAction.ngHref) ? this.attr(fAction, 'ngHref') : "";
+                            html += (fAction.ngShow) ? this.attr(fAction, 'ngShow') : "";
+                            html += " class=\"List-actionButton ";
+                            html += (act === 'delete') ? "List-actionButton--delete" : "";
+                            html += "\"";
 
-                        html += ">";
-                        if (fAction.iconClass) {
-                            html += "<i class=\"" + fAction.iconClass + "\"></i>";
-                        } else {
-                            html += SelectIcon({
-                                action: act
-                            });
+                            html += ">";
+                            if (fAction.iconClass) {
+                                html += "<i class=\"" + fAction.iconClass + "\"></i>";
+                            } else {
+                                html += SelectIcon({
+                                    action: act
+                                });
+                            }
+                            // html += SelectIcon({ action: act });
+                            //html += (fAction.label) ? "<span class=\"list-action-label\"> " + fAction.label + "</span>": "";
+                            html += "</button>";
                         }
-                        // html += SelectIcon({ action: act });
-                        //html += (fAction.label) ? "<span class=\"list-action-label\"> " + fAction.label + "</span>": "";
-                        html += "</button>";
                     }
                     html += "</div></td>";
                     html += "</tr>\n";
@@ -2012,5 +2034,6 @@ angular.module('FormGenerator', [GeneratorHelpers.name, 'Utilities', listGenerat
                     ${options.text}
                 </label> `;
         }
+
     }
 ]);

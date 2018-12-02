@@ -17,7 +17,7 @@ logger = logging.getLogger('awx.api.permissions')
 
 __all__ = ['ModelAccessPermission', 'JobTemplateCallbackPermission',
            'TaskPermission', 'ProjectUpdatePermission', 'InventoryInventorySourcesUpdatePermission',
-           'UserPermission', 'IsSuperUser']
+           'UserPermission', 'IsSuperUser', 'InstanceGroupTowerPermission',]
 
 
 class ModelAccessPermission(permissions.BasePermission):
@@ -52,14 +52,18 @@ class ModelAccessPermission(permissions.BasePermission):
                 if not check_user_access(request.user, view.model, 'add', {view.parent_key: parent_obj}):
                     return False
             return True
-        elif getattr(view, 'is_job_start', False):
+        elif hasattr(view, 'obj_permission_type'):
+            # Generic object-centric view permission check without object not needed
             if not obj:
                 return True
-            return check_user_access(request.user, view.model, 'start', obj)
-        elif getattr(view, 'is_job_cancel', False):
-            if not obj:
-                return True
-            return check_user_access(request.user, view.model, 'cancel', obj)
+            # Permission check that happens when get_object() is called
+            extra_kwargs = {}
+            if view.obj_permission_type == 'admin':
+                extra_kwargs['data'] = {}
+            return check_user_access(
+                request.user, view.model, view.obj_permission_type, obj,
+                **extra_kwargs
+            )
         else:
             if obj:
                 return True
@@ -99,7 +103,8 @@ class ModelAccessPermission(permissions.BasePermission):
             return False
 
         # Always allow superusers
-        if getattr(view, 'always_allow_superuser', True) and request.user.is_superuser:
+        if getattr(view, 'always_allow_superuser', True) and request.user.is_superuser \
+                and not hasattr(request.user, 'oauth_scopes'):
             return True
 
         # Check if view supports the request method before checking permission
@@ -222,3 +227,11 @@ class IsSuperUser(permissions.BasePermission):
 
     def has_permission(self, request, view):
         return request.user and request.user.is_superuser
+
+
+class InstanceGroupTowerPermission(ModelAccessPermission):
+    def has_object_permission(self, request, view, obj):
+        if request.method == 'DELETE' and obj.name == "tower":
+            return False
+        return super(InstanceGroupTowerPermission, self).has_object_permission(request, view, obj)
+

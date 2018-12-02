@@ -4,8 +4,6 @@
 # Python
 import base64
 import re
-import yaml
-import json
 
 # Django
 from django.utils.translation import ugettext_lazy as _
@@ -13,13 +11,17 @@ from django.core.exceptions import ValidationError
 
 # REST framework
 from rest_framework.serializers import ValidationError as RestValidationError
+from rest_framework.exceptions import ParseError
+
+# AWX
+from awx.main.utils import parse_yaml_or_json
 
 
 def validate_pem(data, min_keys=0, max_keys=None, min_certs=0, max_certs=None):
     """
     Validate the given PEM data is valid and contains the required numbers of
     keys and certificates.
-    
+
     Return a list of PEM objects, where each object is a dict with the following
     keys:
       - 'all': The entire string for the PEM object including BEGIN/END lines.
@@ -46,28 +48,35 @@ def validate_pem(data, min_keys=0, max_keys=None, min_certs=0, max_certs=None):
 
     # Build regular expressions for matching each object in the PEM file.
     pem_obj_re = re.compile(
-        r'^(-{4,}) *BEGIN ([A-Z ]+?) *\1[\r\n]+' +
-        r'(.+?)[\r\n]+\1 *END \2 *\1[\r\n]?(.*?)$', re.DOTALL,
+        r'^(?P<dashes>-{4,}) *BEGIN (?P<type>[A-Z ]+?) *(?P=dashes)' +
+        r'\s*(?P<data>.+?)\s*' +
+        r'(?P=dashes) *END (?P=type) *(?P=dashes)' +
+        r'(?P<next>.*?)$', re.DOTALL
     )
     pem_obj_header_re = re.compile(r'^(.+?):\s*?(.+?)(\\??)$')
 
     pem_objects = []
     key_count, cert_count = 0, 0
+
+    # Strip leading whitespaces at the start of the PEM data
     data = data.lstrip()
+
     while data:
         match = pem_obj_re.match(data)
         if not match:
             raise ValidationError(_('Invalid certificate or key: %s...') % data[:100])
-        data = match.group(4).lstrip()
+
+        # The rest of the PEM data to process
+        data = match.group('next').lstrip()
 
         # Check PEM object type, check key type if private key.
         pem_obj_info = {}
         pem_obj_info['all'] = match.group(0)
-        pem_obj_info['type'] = pem_obj_type = match.group(2)
+        pem_obj_info['type'] = pem_obj_type = match.group('type')
         if pem_obj_type.endswith('PRIVATE KEY'):
             key_count += 1
             pem_obj_info['type'] = 'PRIVATE KEY'
-            key_type = pem_obj_type.replace('PRIVATE KEY', '').strip()
+            key_type = pem_obj_type.replace('ENCRYPTED PRIVATE KEY', '').replace('PRIVATE KEY', '').strip()
             try:
                 pem_obj_info['key_type'] = private_key_types[key_type]
             except KeyError:
@@ -78,7 +87,7 @@ def validate_pem(data, min_keys=0, max_keys=None, min_certs=0, max_certs=None):
             raise ValidationError(_('Unsupported PEM object type: "%s"') % pem_obj_type)
 
         # Ensure that this PEM object is valid base64 data.
-        pem_obj_info['data'] = match.group(3)
+        pem_obj_info['data'] = match.group('data')
         base64_data = ''
         line_continues = False
         for line in pem_obj_info['data'].splitlines():
@@ -109,6 +118,8 @@ def validate_pem(data, min_keys=0, max_keys=None, min_certs=0, max_certs=None):
             # length field, followed by the ciphername -- if ciphername is anything
             # other than 'none' the key is encrypted.
             pem_obj_info['key_enc'] = not bool(pem_obj_info['bin'].startswith('openssh-key-v1\x00\x00\x00\x00\x04none'))
+        elif match.group('type') == 'ENCRYPTED PRIVATE KEY':
+            pem_obj_info['key_enc'] = True
         elif pem_obj_info.get('key_type', ''):
             pem_obj_info['key_enc'] = bool('ENCRYPTED' in pem_obj_info['data'])
 
@@ -159,8 +170,10 @@ def validate_certificate(data):
     Validate that data contains one or more certificates. Adds BEGIN/END lines
     if necessary.
     """
-    if 'BEGIN CERTIFICATE' not in data:
-        data = '-----BEGIN CERTIFICATE-----\n{}\n-----END CERTIFICATE-----\n'.format(data)
+    if 'BEGIN ' not in data:
+        data = "-----BEGIN CERTIFICATE-----\n{}".format(data)
+    if 'END ' not in data:
+        data = "{}\n-----END CERTIFICATE-----\n".format(data)
     return validate_pem(data, max_keys=0, min_certs=1)
 
 
@@ -179,21 +192,8 @@ def vars_validate_or_raise(vars_str):
     job templates, inventories, or hosts are either an acceptable
     blank string, or are valid JSON or YAML dict
     """
-    if isinstance(vars_str, dict) or (isinstance(vars_str, basestring) and vars_str == '""'):
+    try:
+        parse_yaml_or_json(vars_str, silent_failure=False)
         return vars_str
-
-    try:
-        r = json.loads((vars_str or '').strip() or '{}')
-        if isinstance(r, dict):
-            return vars_str
-    except ValueError:
-        pass
-    try:
-        r = yaml.safe_load(vars_str)
-        # Can be None if '---'
-        if isinstance(r, dict) or r is None:
-            return vars_str
-    except yaml.YAMLError:
-        pass
-    raise RestValidationError(_('Must be valid JSON or YAML.'))
-
+    except ParseError as e:
+        raise RestValidationError(str(e))

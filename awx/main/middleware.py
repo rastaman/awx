@@ -1,10 +1,14 @@
 # Copyright (c) 2015 Ansible, Inc.
 # All Rights Reserved.
 
+import uuid
 import logging
 import threading
-import uuid
 import six
+import time
+import cProfile
+import pstats
+import os
 
 from django.conf import settings
 from django.contrib.auth.models import User
@@ -16,15 +20,49 @@ from django.shortcuts import get_object_or_404, redirect
 from django.apps import apps
 from django.utils.translation import ugettext_lazy as _
 from django.core.urlresolvers import reverse
+from django.urls import resolve
 
 from awx.main.models import ActivityStream
-from awx.api.authentication import TokenAuthentication
 from awx.main.utils.named_url_graph import generate_graph, GraphNode
 from awx.conf import fields, register
 
 
 logger = logging.getLogger('awx.main.middleware')
 analytics_logger = logging.getLogger('awx.analytics.activity_stream')
+perf_logger = logging.getLogger('awx.analytics.performance')
+
+
+class TimingMiddleware(threading.local):
+
+    dest = '/var/lib/awx/profile'
+
+    def process_request(self, request):
+        self.start_time = time.time()
+        if settings.AWX_REQUEST_PROFILE:
+            self.prof = cProfile.Profile()
+            self.prof.enable()
+
+    def process_response(self, request, response):
+        if not hasattr(self, 'start_time'):  # some tools may not invoke process_request
+            return response
+        total_time = time.time() - self.start_time
+        response['X-API-Total-Time'] = '%0.3fs' % total_time
+        if settings.AWX_REQUEST_PROFILE:
+            self.prof.disable()
+            cprofile_file = self.save_profile_file(request)
+            response['cprofile_file'] = cprofile_file
+        perf_logger.info('api response times', extra=dict(python_objects=dict(request=request, response=response)))
+        return response
+
+    def save_profile_file(self, request):
+        if not os.path.isdir(self.dest):
+            os.makedirs(self.dest)
+        filename = '%.3fs-%s' % (pstats.Stats(self.prof).total_tt, uuid.uuid4())
+        filepath = os.path.join(self.dest, filename)
+        with open(filepath, 'w') as f:
+            f.write('%s %s\n' % (request.method, request.get_full_path()))
+            pstats.Stats(self.prof, stream=f).sort_stats('cumulative').print_stats()
+        return filepath
 
 
 class ActivityStreamMiddleware(threading.local):
@@ -81,18 +119,18 @@ class ActivityStreamMiddleware(threading.local):
                     self.instance_ids.append(instance.id)
 
 
-class AuthTokenTimeoutMiddleware(object):
-    """Presume that when the user includes the auth header, they go through the
-    authentication mechanism. Further, that mechanism is presumed to extend
-    the users session validity time by AUTH_TOKEN_EXPIRATION.
-
-    If the auth token is not supplied, then don't include the header
+class SessionTimeoutMiddleware(object):
     """
-    def process_response(self, request, response):
-        if not TokenAuthentication._get_x_auth_token_header(request):
-            return response
+    Resets the session timeout for both the UI and the actual session for the API
+    to the value of SESSION_COOKIE_AGE on every request if there is a valid session.
+    """
 
-        response['Auth-Token-Timeout'] = int(settings.AUTH_TOKEN_EXPIRATION)
+    def process_response(self, request, response):
+        req_session = getattr(request, 'session', None)
+        if req_session and not req_session.is_empty():
+            expiry = int(settings.SESSION_COOKIE_AGE)
+            request.session.set_expiry(expiry)
+            response['Session-Timeout'] = expiry
         return response
 
 
@@ -155,7 +193,7 @@ class URLModificationMiddleware(object):
         return '/'.join(url_units)
 
     def process_request(self, request):
-        if 'REQUEST_URI' in request.environ:
+        if hasattr(request, 'environ') and 'REQUEST_URI' in request.environ:
             old_path = six.moves.urllib.parse.urlsplit(request.environ['REQUEST_URI']).path
             old_path = old_path[request.path.find(request.path_info):]
         else:
@@ -171,5 +209,6 @@ class MigrationRanCheckMiddleware(object):
     def process_request(self, request):
         executor = MigrationExecutor(connection)
         plan = executor.migration_plan(executor.loader.graph.leaf_nodes())
-        if bool(plan) and 'migrations_notran' not in request.path:
+        if bool(plan) and \
+                getattr(resolve(request.path), 'url_name', '') != 'migrations_notran':
             return redirect(reverse("ui:migrations_notran"))

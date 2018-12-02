@@ -6,26 +6,36 @@
 
 export default ['$scope', '$rootScope', '$location', '$stateParams',
     'OrganizationForm', 'GenerateForm', 'Rest', 'Alert',
-    'ProcessErrors', 'GetBasePath', 'Wait', 'CreateSelect2', '$state','InstanceGroupsService',
+    'ProcessErrors', 'GetBasePath', 'Wait', 'CreateSelect2', '$state','InstanceGroupsService', 'ConfigData',
     function($scope, $rootScope, $location, $stateParams, OrganizationForm,
-    GenerateForm, Rest, Alert, ProcessErrors, GetBasePath, Wait, CreateSelect2, $state, InstanceGroupsService) {
+    GenerateForm, Rest, Alert, ProcessErrors, GetBasePath, Wait, CreateSelect2, $state, InstanceGroupsService, ConfigData) {
 
         Rest.setUrl(GetBasePath('organizations'));
         Rest.options()
-            .success(function(data) {
-                if (!data.actions.POST) {
-                    $state.go("^");
-                    Alert('Permission Error', 'You do not have permission to add an organization.', 'alert-info');
-                }
-            });
+        .then(({data}) => {
+            if (!data.actions.POST) {
+                $state.go("^");
+                Alert('Permission Error', 'You do not have permission to add an organization.', 'alert-info');
+            }
+        });
 
         var form = OrganizationForm(),
-            base = $location.path().replace(/^\//, '').split('/')[0];
+        base = $location.path().replace(/^\//, '').split('/')[0];
         init();
 
         function init(){
             // @issue What is this doing, why
             $scope.$emit("HideOrgListHeader");
+            const virtualEnvs = ConfigData.custom_virtualenvs || [];
+            $scope.custom_virtualenvs_visible = virtualEnvs.length > 1;
+            $scope.custom_virtualenvs_options = virtualEnvs.filter(
+                v => !/\/ansible\/$/.test(v)
+            );
+            CreateSelect2({
+                element: '#organization_custom_virtualenv',
+                multiple: false,
+                opts: $scope.custom_virtualenvs_options
+            });
 
             // apply form definition's default field values
             GenerateForm.applyDefaults(form, $scope);
@@ -39,7 +49,8 @@ export default ['$scope', '$rootScope', '$location', '$stateParams',
             Rest.setUrl(url);
             Rest.post({
                     name: $scope.name,
-                    description: $scope.description
+                    description: $scope.description,
+                    custom_virtualenv: $scope.custom_virtualenv
                 })
                 .then(({data}) => {
                     const organization_id = data.id,
@@ -54,9 +65,16 @@ export default ['$scope', '$rootScope', '$location', '$stateParams',
                         .catch(({data, status}) => {
                             ProcessErrors($scope, data, status, form, {
                                 hdr: 'Error!',
-                                msg: 'Failed to add new organization. Post returned status: ' + status
+                                msg: 'Failed to save instance groups. POST returned status: ' + status
                             });
                         });
+                })
+                .catch(({data, status}) => {
+                    let explanation = _.has(data, "name") ? data.name[0] : "";
+                    ProcessErrors($scope, data, status, OrganizationForm, {
+                        hdr: 'Error!',
+                        msg: `Failed to save organization. PUT status: ${status}. ${explanation}`
+                    });
                 });
         };
 

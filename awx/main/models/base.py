@@ -1,13 +1,6 @@
 # Copyright (c) 2015 Ansible, Inc.
 # All Rights Reserved.
 
-# Python
-import json
-import shlex
-
-# PyYAML
-import yaml
-
 # Django
 from django.db import models
 from django.core.exceptions import ValidationError, ObjectDoesNotExist
@@ -21,7 +14,7 @@ from taggit.managers import TaggableManager
 from crum import get_current_user
 
 # AWX
-from awx.main.utils import encrypt_field
+from awx.main.utils import encrypt_field, parse_yaml_or_json
 
 __all__ = ['prevent_search', 'VarsDictProperty', 'BaseModel', 'CreatedModifiedModel',
            'PasswordFieldsModel', 'PrimordialModel', 'CommonModel',
@@ -42,6 +35,11 @@ JOB_TYPE_CHOICES = [
     (PERM_INVENTORY_SCAN, _('Scan')),
 ]
 
+NEW_JOB_TYPE_CHOICES = [
+    (PERM_INVENTORY_DEPLOY, _('Run')),
+    (PERM_INVENTORY_CHECK, _('Check')),
+]
+
 AD_HOC_JOB_TYPE_CHOICES = [
     (PERM_INVENTORY_DEPLOY, _('Run')),
     (PERM_INVENTORY_CHECK, _('Check')),
@@ -52,7 +50,7 @@ PROJECT_UPDATE_JOB_TYPE_CHOICES = [
     (PERM_INVENTORY_CHECK, _('Check')),
 ]
 
-CLOUD_INVENTORY_SOURCES = ['ec2', 'rax', 'vmware', 'gce', 'azure', 'azure_rm', 'openstack', 'custom', 'satellite6', 'cloudforms', 'scm',]
+CLOUD_INVENTORY_SOURCES = ['ec2', 'vmware', 'gce', 'azure_rm', 'openstack', 'rhv', 'custom', 'satellite6', 'cloudforms', 'scm', 'tower',]
 
 VERBOSITY_CHOICES = [
     (0, '0 (Normal)'),
@@ -80,26 +78,7 @@ class VarsDictProperty(object):
         if hasattr(v, 'items'):
             return v
         v = v.encode('utf-8')
-        d = None
-        try:
-            d = json.loads(v.strip() or '{}')
-        except ValueError:
-            pass
-        if d is None:
-            try:
-                d = yaml.safe_load(v)
-                # This can happen if the whole file is commented out
-                if d is None:
-                    d = {}
-            except yaml.YAMLError:
-                pass
-        if d is None and self.key_value:
-            d = {}
-            for kv in [x.decode('utf-8') for x in shlex.split(v, posix=True)]:
-                if '=' in kv:
-                    k, v = kv.split('=', 1)
-                    d[k] = v
-        return d if hasattr(d, 'items') else {}
+        return parse_yaml_or_json(v)
 
     def __set__(self, obj, value):
         raise AttributeError('readonly property')
@@ -114,10 +93,10 @@ class BaseModel(models.Model):
         abstract = True
 
     def __unicode__(self):
-        if hasattr(self, 'name'):
-            return u'%s-%s' % (self.name, self.id)
+        if 'name' in self.__dict__:
+            return u'%s-%s' % (self.name, self.pk)
         else:
-            return u'%s-%s' % (self._meta.verbose_name, self.id)
+            return u'%s-%s' % (self._meta.verbose_name, self.pk)
 
     def clean_fields(self, exclude=None):
         '''
@@ -242,7 +221,46 @@ class PasswordFieldsModel(BaseModel):
             update_fields.append(field)
 
 
-class PrimordialModel(CreatedModifiedModel):
+class HasEditsMixin(BaseModel):
+    """Mixin which will keep the versions of field values from last edit
+    so we can tell if current model has unsaved changes.
+    """
+
+    class Meta:
+        abstract = True
+
+    @classmethod
+    def _get_editable_fields(cls):
+        fds = set([])
+        for field in cls._meta.concrete_fields:
+            if hasattr(field, 'attname'):
+                if field.attname == 'id':
+                    continue
+                elif field.attname.endswith('ptr_id'):
+                    # polymorphic fields should always be non-editable, see:
+                    # https://github.com/django-polymorphic/django-polymorphic/issues/349
+                    continue
+                if getattr(field, 'editable', True):
+                    fds.add(field.attname)
+        return fds
+
+    def _get_fields_snapshot(self, fields_set=None):
+        new_values = {}
+        if fields_set is None:
+            fields_set = self._get_editable_fields()
+        for attr, val in self.__dict__.items():
+            if attr in fields_set:
+                new_values[attr] = val
+        return new_values
+
+    def _values_have_edits(self, new_values):
+        return any(
+            new_values.get(fd_name, None) != self._prior_values_store.get(fd_name, None)
+            for fd_name in new_values.keys()
+        )
+
+
+class PrimordialModel(HasEditsMixin, CreatedModifiedModel):
     '''
     Common model for all object types that have these standard fields
     must use a subclass CommonModel or CommonModelNameNotUnique though
@@ -275,6 +293,11 @@ class PrimordialModel(CreatedModifiedModel):
 
     tags = TaggableManager(blank=True)
 
+    def __init__(self, *args, **kwargs):
+        r = super(PrimordialModel, self).__init__(*args, **kwargs)
+        self._prior_values_store = self._get_fields_snapshot()
+        return r
+
     def save(self, *args, **kwargs):
         update_fields = kwargs.get('update_fields', [])
         user = get_current_user()
@@ -284,10 +307,14 @@ class PrimordialModel(CreatedModifiedModel):
             self.created_by = user
             if 'created_by' not in update_fields:
                 update_fields.append('created_by')
-        self.modified_by = user
-        if 'modified_by' not in update_fields:
-            update_fields.append('modified_by')
+        # Update modified_by if any editable fields have changed
+        new_values = self._get_fields_snapshot()
+        if (not self.pk and not self.modified_by) or self._values_have_edits(new_values):
+            self.modified_by = user
+            if 'modified_by' not in update_fields:
+                update_fields.append('modified_by')
         super(PrimordialModel, self).save(*args, **kwargs)
+        self._prior_values_store = new_values
 
     def clean_description(self):
         # Description should always be empty string, never null.
@@ -309,7 +336,10 @@ class PrimordialModel(CreatedModifiedModel):
                 continue
             if not (self.pk and self.pk == obj.pk):
                 errors.append(
-                    '%s with this (%s) combination already exists.' % (model.__name__, ', '.join(ut))
+                    '%s with this (%s) combination already exists.' % (
+                        model.__name__,
+                        ', '.join(set(ut) - {'polymorphic_ctype'})
+                    )
                 )
         if errors:
             raise ValidationError(errors)

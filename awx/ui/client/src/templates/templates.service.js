@@ -133,10 +133,10 @@ export default ['Rest', 'GetBasePath', '$q', 'NextPage', function(Rest, GetBaseP
       getWorkflowJobTemplateNodes: function(id, page) {
           var url = GetBasePath('workflow_job_templates');
 
-          url = url + id + '/workflow_nodes';
+          url = url + id + '/workflow_nodes?page_size=200';
 
           if(page) {
-              url += '/?page=' + page;
+              url += '/&page=' + page;
           }
 
           Rest.setUrl(url);
@@ -151,7 +151,7 @@ export default ['Rest', 'GetBasePath', '$q', 'NextPage', function(Rest, GetBaseP
           url = url + params.id;
 
           Rest.setUrl(url);
-          return Rest.put(params.data);
+          return Rest.patch(params.data);
       },
       getWorkflowJobTemplate: function(id) {
           var url = GetBasePath('workflow_job_templates');
@@ -259,9 +259,9 @@ export default ['Rest', 'GetBasePath', '$q', 'NextPage', function(Rest, GetBaseP
 
           Rest.setUrl(url);
           Rest.options()
-              .success(function(data) {
+              .then(({data}) => {
                   deferred.resolve(data);
-              }).error(function(msg, code) {
+              }).catch(({msg, code}) => {
                   deferred.reject(msg, code);
               });
 
@@ -274,13 +274,22 @@ export default ['Rest', 'GetBasePath', '$q', 'NextPage', function(Rest, GetBaseP
 
           Rest.setUrl(url);
           Rest.options()
-              .success(function(data) {
+              .then(({data}) => {
                   deferred.resolve(data);
-              }).error(function(msg, code) {
+              }).catch(({msg, code}) => {
                   deferred.reject(msg, code);
               });
 
           return deferred.promise;
+      },
+      postWorkflowNodeCredential: function(params) {
+          // params.id
+          // params.data
+
+          var url = GetBasePath('workflow_job_template_nodes') + params.id + '/credentials';
+
+          Rest.setUrl(url);
+          return Rest.post(params.data);
       }
     };
 }];

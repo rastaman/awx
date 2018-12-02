@@ -6,13 +6,14 @@
 
 import jobSubmissionController from './job-submission.controller';
 
-export default [ 'templateUrl', 'CreateDialog', 'Wait', 'CreateSelect2', 'ParseTypeChange', 'GetSurveyQuestions', 'i18n', 'credentialTypesLookup',
-    function(templateUrl, CreateDialog, Wait, CreateSelect2, ParseTypeChange, GetSurveyQuestions, i18n, credentialTypesLookup) {
+export default [ 'templateUrl', 'CreateDialog', 'Wait', 'CreateSelect2', 'ParseTypeChange', 'GetSurveyQuestions', 'i18n', 'credentialTypesLookup', '$transitions',
+    function(templateUrl, CreateDialog, Wait, CreateSelect2, ParseTypeChange, GetSurveyQuestions, i18n, credentialTypesLookup, $transitions) {
     return {
         scope: {
             submitJobId: '=',
             submitJobType: '@',
-            submitJobRelaunch: '='
+            submitJobRelaunch: '=',
+            relaunchHostType: '@'
         },
         templateUrl: templateUrl('job-submission/job-submission'),
         controller: jobSubmissionController,
@@ -27,7 +28,7 @@ export default [ 'templateUrl', 'CreateDialog', 'Wait', 'CreateSelect2', 'ParseT
                     credentialTypesLookup()
                         .then(kinds => {
                             if(scope.ask_credential_on_launch) {
-                                scope.credentialKind = "" + kinds.Machine;
+                                scope.credentialKind = "" + kinds.ssh;
                                 scope.includeCredentialList = true;
                             }
                         });
@@ -130,7 +131,7 @@ export default [ 'templateUrl', 'CreateDialog', 'Wait', 'CreateSelect2', 'ParseT
                 }
             };
 
-            scope.$on("$stateChangeStart", function() {
+            $transitions.onStart({}, function() {
                 scope.$evalAsync(function( scope ) {
                     scope.clearDialog();
                 });

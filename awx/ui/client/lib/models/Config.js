@@ -1,12 +1,13 @@
-let BaseModel;
+let $log;
+let Base;
 
 function getTruncatedVersion () {
     let version;
 
     try {
-        version = this.get('version').split('-')[0];
+        [version] = this.get('version').split('-');
     } catch (err) {
-        console.error(err);
+        $log.error(err);
     }
 
     return version;
@@ -15,23 +16,24 @@ function getTruncatedVersion () {
 function isOpen () {
     return this.get('license_info.license_type') === 'open';
 }
-  
-function ConfigModel (method, resource, graft) {
-    BaseModel.call(this, 'config', { cache: true });
+
+function ConfigModel (method, resource, config) {
+    Base.call(this, 'config', { cache: true });
 
     this.Constructor = ConfigModel;
     this.getTruncatedVersion = getTruncatedVersion;
     this.isOpen = isOpen;
 
-    return this.create(method, resource, graft);
+    return this.create(method, resource, config);
 }
 
-function ConfigModelLoader (_BaseModel_) {
-    BaseModel = _BaseModel_;
+function ConfigModelLoader (BaseModel, _$log_) {
+    Base = BaseModel;
+    $log = _$log_;
 
     return ConfigModel;
 }
 
-ConfigModelLoader.$inject = ['BaseModel'];
+ConfigModelLoader.$inject = ['BaseModel', '$log'];
 
 export default ConfigModelLoader;

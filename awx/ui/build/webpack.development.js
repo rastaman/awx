@@ -1,11 +1,9 @@
-const path = require('path');
+const merge = require('webpack-merge');
 
-const _ = require('lodash');
+const base = require('./webpack.base');
 
-let base = require('./webpack.base');
-
-let development = {
-    devtool: 'cheap-source-map'
+const development = {
+    devtool: 'source-map'
 };
 
-module.exports = _.merge(base, development);
+module.exports = merge(base, development);
